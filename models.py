@@ -218,6 +218,22 @@ class InteractionModel(Model):
         return dist
 
 
+    def get_dist_mat_experimental(self, ctype_onehots):
+        rotation_mats = self.get_rotation_mats()
+
+        _N = ctype_onehots.size(0)
+
+        # einsum notations: i, j index cells; c, d index cell types; x, y index embedding dimensions
+        blown_rot_mats = torch.einsum('ic,cdxy->idxy', ctype_onehots, rotation_mats)
+        blown_rot_mats = torch.einsum('idxy,jd->ijxy', blown_rot_mats, ctype_onehots) # N_source x N_target x D x D
+
+        transformed_target_embs = torch.einsum('jx,ijxy->ijy', self.embeddings, blown_rot_mats) # N_source x N_target x D
+        expanded_source_embs = torch.einsum('ix,j->ijx', self.embeddings, torch.ones(_N)) # N_source x N_target x D
+
+        distance = torch.norm(transformed_target_embs - expanded_source_embs, dim=2)**2
+        return distance
+
+
     def pred_synapses(self, ctype_onehots):
         """
         ctype_onehots: N x Ntype
@@ -232,7 +248,7 @@ class InteractionModel(Model):
         # target_sum = torch.sum(target_emb**2, 1, keepdim=True)
         # cross_term = source_emb @ target_emb.T
         # dist = emb_sum + target_sum.T - 2 * cross_term
-        dist = self.get_dist_mat(ctype_onehots)
+        dist = self.get_dist_mat_experimental(ctype_onehots)
 
         content = scaling * torch.exp(-dist / covar) + bias
 
