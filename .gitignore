@@ -3,3 +3,4 @@
 *.npz
 *.png
 *.svg
+*.pyc
