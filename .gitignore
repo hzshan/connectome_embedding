@@ -1,0 +1,4 @@
+traced_neurons.csv
+traced-roi-connections.csv
+traced-total-connections.csv
+*.ipynb
