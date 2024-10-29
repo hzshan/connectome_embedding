@@ -49,7 +49,7 @@ def train_model(model, target_mat, types_1hot,
     
     return losses
 
-def get_Jall_neuronall(datapath = ""):
+def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     # load information about traced neurons and traced connections
     neuronsall = pd.read_csv(datapath + "traced-neurons.csv")
     neuronsall.sort_values(by=['instance'], ignore_index=True, inplace=True)
@@ -65,7 +65,15 @@ def get_Jall_neuronall(datapath = ""):
 
     Jall[postinds, preinds] = conns.weight
 
-    return Jall, neuronsall
+    # only keep neurons with at least min_num_per_type neurons of the same type
+    types = np.array(neuronsall.type).astype(str)
+    unique_types, counts = np.unique(types, return_counts=True)
+    inds_to_keep = []
+    for _type, _count in zip(unique_types, counts):
+        if _count > 10:
+            inds_to_keep += list(np.where(np.array(neuronsall.type).astype(str) == _type)[0])
+
+    return Jall[inds_to_keep][:, inds_to_keep], neuronsall.take(inds_to_keep)
 
 
 def sortsubtype(t, types):
