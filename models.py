@@ -60,7 +60,7 @@ class Model:
         covar = ctype_onehots @ (self.C**2 + eps_dist) @ ctype_onehots.T
         bias = ctype_onehots @ self.B @ ctype_onehots.T
 
-        content = scaling * torch.exp(-get_squared_dist(self.embeddings) / covar) + bias
+        content = scaling * torch.exp(-get_squared_dist(self.embeddings, self.embeddings) / covar) + bias
 
         return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
 
