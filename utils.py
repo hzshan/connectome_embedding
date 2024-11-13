@@ -1,17 +1,23 @@
 import pandas as pd
 import numpy as np
 import torch
-import tqdm
+import tqdm, pandas
+from scipy.sparse import csr_matrix
 
 def train_model(model, target_mat, types_1hot,
                 loss_type='poisson', lr=0.01, steps=40000,
                 print_every=2000, reg_fn=None):
+
+    # only compute loss on off-diagonal elements of J
     _N = target_mat.shape[0]
     validinds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
     yvalid = target_mat.flatten()[validinds]
+
     optim = torch.optim.Adam(params=model.params, lr=lr)
 
     losses = np.zeros(steps)
+    embedding_norms = np.zeros(steps)
+    rotation_norms = np.zeros(steps)
 
     if loss_type == 'poisson':
         possion_loss = torch.nn.PoissonNLLLoss(log_input=False)
@@ -40,6 +46,11 @@ def train_model(model, target_mat, types_1hot,
         optim.step()
 
         losses[i] = loss.detach().numpy()
+        embedding_norms[i] = torch.norm(model.embeddings).detach().numpy()
+
+        if model.rotation_params is not None:
+            rotation_norms[i] = torch.norm(model.rotation_params).detach().numpy()
+
         if loss_type == 'mse':
             losses[i] /= (torch.norm(yvalid)**2).numpy()
 
@@ -47,7 +58,7 @@ def train_model(model, target_mat, types_1hot,
             print(i, f'normalized loss: {losses[i]:.4f}',
                 f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**2 / _N:.2f}')
     
-    return losses
+    return losses, embedding_norms, rotation_norms
 
 def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     # load information about traced neurons and traced connections
@@ -70,10 +81,32 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     unique_types, counts = np.unique(types, return_counts=True)
     inds_to_keep = []
     for _type, _count in zip(unique_types, counts):
-        if _count > 10:
+        if _count > min_num_per_type:
             inds_to_keep += list(np.where(np.array(neuronsall.type).astype(str) == _type)[0])
 
     return Jall[inds_to_keep][:, inds_to_keep], neuronsall.take(inds_to_keep)
+
+
+def get_Jall_neuronall_flywire(datapath = ""):
+    neuronsall = pd.read_csv(datapath + "neurons.csv")
+    classif = pd.read_csv(datapath + "classification.csv")
+    visual_types = pd.read_csv(datapath + "visual_neuron_types.csv")
+    neuronsall = neuronsall.merge(classif, on="root_id", how="left")
+    neuronsall = neuronsall.merge(visual_types, on="root_id", how="left")
+    neuronsall.rename(columns={'type': "visual_type", 'family':'visual_family',
+                            'subsystem':'visual_subsystem'}, inplace=True)
+    conns = pd.read_csv(datapath + "connections.csv")
+
+    Nall = len(neuronsall)
+    idhash = dict(zip(neuronsall.root_id,np.arange(Nall)))
+    neuronsall['J_idx'] = neuronsall['J_idx_post'] = neuronsall['J_idx_pre'] = neuronsall.root_id.apply(lambda x: idhash[x])
+    preinds = [idhash[x] for x in conns.pre_root_id]
+    postinds = [idhash[x] for x in conns.post_root_id]
+    # Jall = np.zeros([Nall, Nall], dtype=np.uint)
+    # Jall[postinds, preinds] = conns.syn_count
+    Jall = csr_matrix((conns.syn_count, (postinds, preinds)), shape=(Nall, Nall), dtype="int16")
+
+    return neuronsall, Jall
 
 
 def sortsubtype(t, types):
@@ -122,19 +155,25 @@ def prep_J_data(full_J_mat, all_neurons, types_wanted=[], separate_LR=False):
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    uniqtypes = pd.unique(neurons.type)
-    Ntype = len(uniqtypes)
-    typehash = dict(zip(uniqtypes, np.arange(Ntype)))
-    typeclasses = np.array([typehash[x] for x in neurons.type])
+    types_1hot, Ntype, typehash, uniqtypes = make_onehot_embedding(neurons, 'type')
 
-    types_1hot = np.zeros([N, Ntype])
-    types_1hot[np.arange(N), typeclasses] = 1.
-    types_1hot = torch.tensor(types_1hot).float()
 
     #adjacency matrix in row presynaptic, column postsynaptic format
     Adj = torch.tensor(J.T).float()
 
     return Adj, types_1hot, N, Ntype, neurons, uniqtypes, typehash
+
+
+def make_onehot_embedding(neurons:pandas.DataFrame, type_key:str):
+    uniqtypes = pd.unique(neurons[type_key])
+    Ntypes = len(uniqtypes)
+    typehash = dict(zip(uniqtypes, np.arange(Ntypes)))
+    typeclasses = np.array([typehash[x] for x in neurons[type_key]])
+
+    types_1hot = np.zeros([len(neurons), Ntypes])
+    types_1hot[np.arange(len(neurons)), typeclasses] = 1.
+    types_1hot = torch.tensor(types_1hot).float()
+    return types_1hot, Ntypes, typehash, uniqtypes
 
 
 def init_uniform_param(shape, scale):
@@ -144,3 +183,19 @@ def init_uniform_param(shape, scale):
 
 def remove_diag(mat):
     return mat - torch.diag(torch.diag(mat))
+
+
+def tick_maker(unique_types, types_onehot, dont_count=False):
+    """
+    Make tick labels for plotting. If dont_count is True, return the indices.
+    """
+    tick_inds = []
+    tick_labels = []
+    n_per_type = types_onehot.sum(0)
+    for i, ut in enumerate(unique_types):
+        tick_inds.append(torch.sum(n_per_type[:i]) + n_per_type[i] / 2)
+        tick_labels.append(ut + f" ({int(n_per_type[i])})")
+    if dont_count:
+        return np.arange(len(unique_types)), tick_labels
+    else:
+        return tick_inds, tick_labels
