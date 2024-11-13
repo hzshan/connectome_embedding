@@ -41,6 +41,9 @@ class Model:
         self.B = utils.init_uniform_param((Ntype, Ntype), 1.)
         self.C = utils.init_uniform_param((Ntype, Ntype), 1.)
 
+        self.N = N
+        self.Ntype = Ntype
+
         self.params = [self.embeddings, self.A, self.B, self.C]
 
         assert wrapper_fn in ['exp', 'relu']
@@ -164,6 +167,8 @@ class InteractionModel(Model):
         
         self.params += [self.rotation_params,
                         self.translation_vecs]
+        
+        self.use_transforms = True  # if False, use the original embeddings
 
 
     def get_target_embs_for_plots(self, ctype_onehots, source_type):
@@ -202,23 +207,23 @@ class InteractionModel(Model):
     def get_rotation_mats(self):
         return make_rotation_mats(self.rotation_params)
     
-    def get_dist_mat(self, ctype_onehots):
-        rotation_mats = self.get_rotation_mats()
+    # def get_dist_mat(self, ctype_onehots):
+    #     rotation_mats = self.get_rotation_mats()
 
-        _N, _Ntype = ctype_onehots.size()
-        dist = torch.zeros((_N, _N))
+    #     _N, _Ntype = ctype_onehots.size()
+    #     dist = torch.zeros((_N, _N))
 
-        for i in range(_Ntype):
-            for j in range(_Ntype):
-                source_inds = torch.nonzero(ctype_onehots[:, i]).squeeze()
-                target_inds = torch.nonzero(ctype_onehots[:, j]).squeeze()
-                source_embs = self.embeddings[source_inds]
-                target_embs = self.embeddings[target_inds] @ rotation_mats[i, j] + self.translation_vecs[i, j]
-                dist[source_inds[:, None], target_inds] = get_squared_dist(source_embs, target_embs)
-        return dist
+    #     for i in range(_Ntype):
+    #         for j in range(_Ntype):
+    #             source_inds = torch.nonzero(ctype_onehots[:, i]).squeeze()
+    #             target_inds = torch.nonzero(ctype_onehots[:, j]).squeeze()
+    #             source_embs = self.embeddings[source_inds]
+    #             target_embs = self.embeddings[target_inds] @ rotation_mats[i, j] + self.translation_vecs[i, j]
+    #             dist[source_inds[:, None], target_inds] = get_squared_dist(source_embs, target_embs)
+    #     return dist
 
 
-    def get_dist_mat_experimental(self, ctype_onehots):
+    def get_dist_mat_with_transforms(self, ctype_onehots):
         rotation_mats = self.get_rotation_mats()
 
         _N = ctype_onehots.size(0)
@@ -248,7 +253,10 @@ class InteractionModel(Model):
         # target_sum = torch.sum(target_emb**2, 1, keepdim=True)
         # cross_term = source_emb @ target_emb.T
         # dist = emb_sum + target_sum.T - 2 * cross_term
-        dist = self.get_dist_mat_experimental(ctype_onehots)
+        if self.use_transforms:
+            dist = self.get_dist_mat_with_transforms(ctype_onehots)
+        else:
+            dist = get_squared_dist(self.embeddings, self.embeddings)
 
         content = scaling * torch.exp(-dist / covar) + bias
 
