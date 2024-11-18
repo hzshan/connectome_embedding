@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import tqdm, pandas
 from scipy.sparse import csr_matrix
+import matplotlib.pyplot as plt
 
 def train_model(model, target_mat, types_1hot,
                 loss_type='poisson', lr=0.01, steps=40000,
@@ -109,42 +110,47 @@ def get_Jall_neuronall_flywire(datapath = ""):
     return neuronsall, Jall
 
 
-def sortsubtype(t, types):
+def sortsubtype(t, list_of_types):
     """
     Get indices of neurons whose type contains the string t.
     if the string ends with '=', then only neurons of that exact type are included.
     """
     if t[-1] == '=':
         t = t[:-1]
-        inds = np.nonzero([t == x for x in types])[0]
+        inds = np.nonzero([t == x for x in list_of_types])[0]
     else:
-        inds = np.nonzero([t in x for x in types])[0]
-    sortinds = np.argsort(types[inds])
+        inds = np.nonzero([t in x for x in list_of_types])[0]
+    sortinds = np.argsort(list_of_types[inds])
     inds = inds[sortinds]
     return inds
 
 
-def prep_J_data(full_J_mat, all_neurons, types_wanted=[], separate_LR=False):
+def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
+    """
+    Get indices of neurons whose type contains one of the strings in types_wanted.
+
+    the "type" used for each neuron is specified by `type_key`, which should be 
+    one of the columns of neuronall.
+    """
+    list_of_types = np.array(neuronall[type_key]).astype(str)
+    return np.concatenate([sortsubtype(t, list_of_types) for t in types_wanted])
+
+
+def prep_J_data(full_J_mat, all_neurons, types_wanted=[], split_LR=[]):
     """
     Produce J and one-hot type vectors in torch tensor format. Include only
     neurons of types in types_wanted.
     """
-    types = np.array(all_neurons.type).astype(str)
 
-
-    allcx = np.concatenate([sortsubtype(t, types) for t in types_wanted])
+    allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
 
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
     N = J.shape[0]
     neurons = all_neurons.iloc[allcx, :]
     neurons.reset_index(inplace=True)
 
-    if separate_LR:
-        for i in range(N):
-
-            # if neurons.type[i] == "EPG":
-            #     continue
-
+    for i in range(N):
+        if np.sum([t in neurons.type[i] for t in split_LR]) > 0:
             # only look for L/R information at the end of the type string
             if '_L' in neurons.instance[i][-6:]:
                 neurons.loc[i, 'type'] += '_L'
@@ -185,7 +191,7 @@ def remove_diag(mat):
     return mat - torch.diag(torch.diag(mat))
 
 
-def tick_maker(unique_types, types_onehot, dont_count=False):
+def tick_maker(unique_types, types_onehot, return_idx=False):
     """
     Make tick labels for plotting. If dont_count is True, return the indices.
     """
@@ -195,7 +201,38 @@ def tick_maker(unique_types, types_onehot, dont_count=False):
     for i, ut in enumerate(unique_types):
         tick_inds.append(torch.sum(n_per_type[:i]) + n_per_type[i] / 2)
         tick_labels.append(ut + f" ({int(n_per_type[i])})")
-    if dont_count:
+    if return_idx:
         return np.arange(len(unique_types)), tick_labels
     else:
         return tick_inds, tick_labels
+
+
+def data_summary(J, neurons, type_onehot, plotting='syn_per_n', type_key='type'):
+    uniqtypes = neurons[type_key].unique()
+    
+    n_per_type = type_onehot.sum(0)
+
+    # number of synapses between a pair of cell types
+    conn_count = type_onehot.T @ J @ type_onehot
+    num_synapse_per_neuron = conn_count / n_per_type[None, :]
+
+
+    # number of connections between a pair of cell types
+    connected = type_onehot.T @ (J > 0).float() @ type_onehot
+    num_connections_per_neuron = connected / n_per_type[None, :]
+
+    # number of possible connections between a pair of cell types
+    # total_synapses = type_onehot.T @ np.ones_like(J) @ type_onehot
+
+    plt.figure()
+    # plt.imshow(connected / total_synapses, cmap='gray_r')
+    if plotting == 'syn_per_n':
+        plt.imshow(num_synapse_per_neuron, cmap='gray_r')
+    elif plotting == 'con_per_n':
+        plt.imshow(num_connections_per_neuron, cmap='gray_r')
+    plt.xticks(*tick_maker(uniqtypes, type_onehot, return_idx=True),
+               rotation=90)
+    plt.yticks(*tick_maker(uniqtypes, type_onehot, return_idx=True))
+    plt.xlabel('post-synaptic')
+    plt.ylabel('pre-synaptic')
+    plt.colorbar()
