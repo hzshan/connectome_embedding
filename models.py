@@ -1,6 +1,7 @@
 import utils
 import torch
 import numpy as np
+import pandas
 
 def get_squared_dist(source_emb, target_emb):
     """
@@ -26,7 +27,7 @@ class Model:
     """
     Base class for models.
     """
-    def __init__(self, N, Ntype, D, wrapper_fn='exp'):
+    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp'):
         """
         Args:
         N: number of neurons
@@ -43,6 +44,9 @@ class Model:
 
         self.N = N
         self.Ntype = Ntype
+        self.onehot_types = onehot_types
+
+        assert onehot_types.size() == (N, Ntype)
 
         self.params = [self.embeddings, self.A, self.B, self.C]
 
@@ -50,7 +54,7 @@ class Model:
         self.wrapper_fn = 'exp'
 
 
-    def pred_synapses(self, ctype_onehots):
+    def pred_synapses(self):
         """
         Predict number synapses from stored embeddings.
         Args:
@@ -59,9 +63,9 @@ class Model:
 
         eps_dist = 0.01
 
-        scaling = ctype_onehots @ self.A @ ctype_onehots.T
-        covar = ctype_onehots @ (self.C**2 + eps_dist) @ ctype_onehots.T
-        bias = ctype_onehots @ self.B @ ctype_onehots.T
+        scaling = self.onehot_types @ self.A @ self.onehot_types.T
+        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
+        bias = self.onehot_types @ self.B @ self.onehot_types.T
 
         content = scaling * torch.exp(-get_squared_dist(self.embeddings, self.embeddings) / covar) + bias
 
@@ -152,8 +156,9 @@ class InteractionModel(Model):
     """
     Model with a rotation matrix for each pair of cell types.
     """
-    def __init__(self, N, Ntype, D, wrapper_fn='exp'):
-        super().__init__(N, Ntype, D, wrapper_fn)
+    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp'):
+        super().__init__(N, Ntype, D, onehot_types,
+                         wrapper_fn=wrapper_fn)
 
         # there is a separate DxD rotation matrix for each pair of cell types,
         # and a D-dim translation vector
@@ -223,41 +228,42 @@ class InteractionModel(Model):
     #     return dist
 
 
-    def get_dist_mat_with_transforms(self, ctype_onehots):
+    def get_dist_mat_with_transforms(self):
         rotation_mats = self.get_rotation_mats()
 
-        _N = ctype_onehots.size(0)
-
         # einsum notations: i, j index cells; c, d index cell types; x, y index embedding dimensions
-        blown_rot_mats = torch.einsum('ic,cdxy->idxy', ctype_onehots, rotation_mats)
-        blown_rot_mats = torch.einsum('idxy,jd->ijxy', blown_rot_mats, ctype_onehots) # N_source x N_target x D x D
+        blown_rot_mats = torch.einsum('ic,cdxy->idxy',
+                                      self.onehot_types, rotation_mats)
+        blown_rot_mats = torch.einsum('idxy,jd->ijxy',
+                                      blown_rot_mats, self.onehot_types) # N_source x N_target x D x D
 
         transformed_target_embs = torch.einsum('jx,ijxy->ijy', self.embeddings, blown_rot_mats) # N_source x N_target x D
-        expanded_source_embs = torch.einsum('ix,j->ijx', self.embeddings, torch.ones(_N)) # N_source x N_target x D
+        expanded_source_embs = torch.einsum('ix,j->ijx', self.embeddings, torch.ones(self.N)) # N_source x N_target x D
 
         distance = torch.norm(transformed_target_embs - expanded_source_embs, dim=2)**2
         return distance
 
 
-    def pred_synapses(self, ctype_onehots):
+    def pred_synapses(self):
         """
-        ctype_onehots: N x Ntype
+
         """
         eps_dist = 0.01
 
-        scaling = ctype_onehots @ self.A @ ctype_onehots.T
-        covar = ctype_onehots @ (self.C**2 + eps_dist) @ ctype_onehots.T
-        bias = ctype_onehots @ self.B @ ctype_onehots.T
+        scaling = self.onehot_types @ self.A @ self.onehot_types.T
+        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
+        bias = self.onehot_types @ self.B @ self.onehot_types.T
 
         # emb_sum = torch.sum(source_emb**2, 1, keepdim=True)
         # target_sum = torch.sum(target_emb**2, 1, keepdim=True)
         # cross_term = source_emb @ target_emb.T
         # dist = emb_sum + target_sum.T - 2 * cross_term
         if self.use_transforms:
-            dist = self.get_dist_mat_with_transforms(ctype_onehots)
+            dist = self.get_dist_mat_with_transforms()
         else:
             dist = get_squared_dist(self.embeddings, self.embeddings)
 
         content = scaling * torch.exp(-dist / covar) + bias
 
         return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+    
