@@ -1,26 +1,12 @@
 import utils
 import torch
 import numpy as np
-import pandas
-
-def get_squared_dist(source_emb, target_emb):
-    """
-    Assuming a NxD shape, return a NxN matrix of squared distances."""
-    source_sum_sq = torch.sum(source_emb * source_emb, 1, keepdim=True)
-    target_sum_sq = torch.sum(target_emb * target_emb, 1, keepdim=True)
-
-    return source_sum_sq + target_sum_sq.T - 2 * (source_emb @ target_emb.T)
+import tqdm
 
 
-def make_rotation_mats(rotation_params):
-    """
-    rotation_params: (Ntype, D, D)
-
-    Recover SO(D) matrices via matrix exponential
-    """
-    anti_sym = rotation_params - rotation_params.transpose(-1, -2)
-
-    return torch.matrix_exp(anti_sym)
+def init_uniform_param(shape, scale):
+    return torch.tensor(
+        np.ones(shape) * scale, dtype=torch.float32, requires_grad=True)
 
 
 class Model:
@@ -38,9 +24,9 @@ class Model:
             np.random.randn(N, D) / np.sqrt(D),
             requires_grad=True, dtype=torch.float32)
 
-        self.A = utils.init_uniform_param((Ntype, Ntype), 1.)
-        self.B = utils.init_uniform_param((Ntype, Ntype), 1.)
-        self.C = utils.init_uniform_param((Ntype, Ntype), 1.)
+        self.A = init_uniform_param((Ntype, Ntype), 1.)
+        self.B = init_uniform_param((Ntype, Ntype), 1.)
+        self.C = init_uniform_param((Ntype, Ntype), 1.)
 
         self.N = N
         self.Ntype = Ntype
@@ -67,9 +53,12 @@ class Model:
         covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
         bias = self.onehot_types @ self.B @ self.onehot_types.T
 
-        content = scaling * torch.exp(-get_squared_dist(self.embeddings, self.embeddings) / covar) + bias
+        content = scaling * torch.exp(-utils.get_squared_dist(
+            self.embeddings, self.embeddings) / covar) + bias
 
-        return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+        mean = torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+
+        return mean - torch.diag(mean.diag())  # remove self-connections
 
 
 class AsymModel(Model):
@@ -81,8 +70,8 @@ class AsymModel(Model):
             np.random.randn(N, D) / np.sqrt(D),
             requires_grad=True, dtype=torch.float32)
 
-        self.A_asym = utils.init_uniform_param((Ntype, Ntype), 1.)
-        self.C_asym = utils.init_uniform_param((Ntype, Ntype), 1.)
+        self.A_asym = init_uniform_param((Ntype, Ntype), 1.)
+        self.C_asym = init_uniform_param((Ntype, Ntype), 1.)
 
         self.params += [self.asym_embeddings, self.A_asym, self.C_asym]
         self.asym_mat = torch.sign(-torch.arange(N).view(-1, 1) + torch.arange(N).view(1, -1))
@@ -104,8 +93,10 @@ class AsymModel(Model):
 
         bias = ctype_onehots @ self.B @ ctype_onehots.T
 
-        sym_part = scaling * torch.exp(-get_squared_dist(self.embeddings) / covar)
-        asym_part = scaling_asym * torch.exp(-get_squared_dist(self.asym_embeddings) / covar_asym)
+        sym_part = scaling * torch.exp(-utils.get_squared_dist(
+            self.embeddings) / covar)
+        asym_part = scaling_asym * torch.exp(-utils.get_squared_dist(
+            self.asym_embeddings) / covar_asym)
 
         # return  torch.exp(scaling * torch.exp(-sq_dist_mat / covar) + bias)
 
@@ -145,7 +136,7 @@ class SourceTargetModel(Model):
         source_emb = self.embeddings
         target_emb = self.embeddings + self.target_modifier
 
-        dist = get_squared_dist(source_emb, target_emb)
+        dist = utils.get_squared_dist(source_emb, target_emb)
 
         content = scaling * torch.exp(-dist / covar) + bias
 
@@ -180,7 +171,8 @@ class InteractionModel(Model):
         _, _Ntype = ctype_onehots.size()
 
         # Ntype x D x D
-        rotation_mats = make_rotation_mats(self.rotation_params[source_type])
+        rotation_mats = utils.make_rotation_mats(
+            self.rotation_params[source_type])
 
         all_target_embs = []
         for target_type in range(_Ntype):
@@ -196,7 +188,8 @@ class InteractionModel(Model):
         _, _Ntype = ctype_onehots.size()
 
         # Ntype x D x D
-        rotation_mats = make_rotation_mats(self.rotation_params[:, target_type])
+        rotation_mats = utils.make_rotation_mats(
+            self.rotation_params[:, target_type])
 
         all_source_embs = []
         for source_type in range(_Ntype):
@@ -210,7 +203,7 @@ class InteractionModel(Model):
         return self.rotation_params - self.rotation_params.transpose(-1, -2)
 
     def get_rotation_mats(self):
-        return make_rotation_mats(self.rotation_params)
+        return utils.make_rotation_mats(self.rotation_params)
     
     # def get_dist_mat(self, ctype_onehots):
     #     rotation_mats = self.get_rotation_mats()
@@ -261,9 +254,68 @@ class InteractionModel(Model):
         if self.use_transforms:
             dist = self.get_dist_mat_with_transforms()
         else:
-            dist = get_squared_dist(self.embeddings, self.embeddings)
+            dist = utils.get_squared_dist(self.embeddings, self.embeddings)
 
         content = scaling * torch.exp(-dist / covar) + bias
 
         return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+
+def train_model(model, target_mat,
+                loss_type='poisson', lr=0.01, steps=40000,
+                print_every=2000, reg_fn=None):
+    """
+    Train an embedding model to fit the connectivity matrix.
+
+    """
+
+    # only compute loss on off-diagonal elements of J
+    _N = target_mat.shape[0]
+    validinds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
+    yvalid = target_mat.flatten()[validinds]
+
+    optim = torch.optim.Adam(params=model.params, lr=lr)
+
+    losses = np.zeros(steps)
+    embedding_norms = np.zeros(steps)
+    rotation_norms = np.zeros(steps)
+
+    if loss_type == 'poisson':
+        possion_loss = torch.nn.PoissonNLLLoss(log_input=False)
+
+    for i in tqdm.trange(steps):
+        optim.zero_grad()
+
+        preds = model.pred_synapses()
+
+        if loss_type == 'poisson':
+            loss = possion_loss(preds.flatten()[validinds], yvalid)
+        else:
+            assert loss_type == 'mse'
+            loss = torch.norm(preds.flatten()[validinds] - yvalid)**2
+
+
+        if reg_fn is not None:
+            tot_loss = loss + reg_fn(model)
+        else:
+            tot_loss = loss
+
+        tot_loss.backward()
+
+        if torch.isnan(tot_loss):
+            raise ValueError('loss is nan')
+        optim.step()
+
+        losses[i] = loss.detach().numpy()
+        embedding_norms[i] = torch.norm(model.embeddings).detach().numpy()
+
+        # if model.rotation_params is not None:
+        #     rotation_norms[i] = torch.norm(model.rotation_params).detach().numpy()
+
+        if loss_type == 'mse':
+            losses[i] /= (torch.norm(yvalid)**2).numpy()
+
+        if (i+1) % print_every == 0:
+            print(i, f'normalized loss: {losses[i]:.4f}',
+                f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**2 / _N:.2f}')
     
+    return losses, embedding_norms, rotation_norms
