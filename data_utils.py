@@ -1,43 +1,94 @@
+"""
+This file contains utility functions for loading and processing connectome data.
+Notations:
+N - number of neurons
+Ntype - number of neuron types
+
+Preprocessing workflow:
+1. `get_Jall_neuronall` and `get_Jall_neuronall_flywire` directly work with data
+files downloaded from hemibrain and flywire, respectively. 
+    At this stage, there is the option to remove types with fewer than a certain
+    number of neurons.
+
+2. `prep_connectivity_data` and `prep_connectivity_data_flywire` are used to
+process the data into a ConnectivityData object, which contains the connectivity
+matrix J and information about neurons.
+"""
+
 import pandas as pd
 import numpy as np
 import torch
-import tqdm, pandas
+import pandas
 from scipy.sparse import csr_matrix
-import matplotlib.pyplot as plt
-import scipy, analysis
+import utils
 
 
-def make_onehot_type_vectors(neurons:pandas.DataFrame, type_key:str):
-    """
-    Make one-hot vectors for neuron types. "type" is defined by the "type_key"
-    column in the neurons DataFrame.
+class ConnectivityData:
 
-    Returns:
-    types_1hot: NxNtype torch tensor, the one-hot encoding of neuron types
-    Ntypes: int, the number of unique types
-    typehash: dict, the mapping from type string to type index
-    uniqtypes: list of str, the list of unique types
-    neu
-    """
-    uniqtypes = pd.unique(neurons[type_key])
-    Ntypes = len(uniqtypes)
-    typehash = dict(zip(uniqtypes, np.arange(Ntypes)))
-    typeclasses = np.array([typehash[x] for x in neurons[type_key]])
+    @staticmethod
+    def make_onehot_type_vectors(neurons:pandas.DataFrame, type_key:str):
+        """
+        Make one-hot vectors for neuron types. "type" is defined by the "type_key"
+        column in the neurons DataFrame.
 
-    types_1hot = np.zeros([len(neurons), Ntypes])
-    types_1hot[np.arange(len(neurons)), typeclasses] = 1.
-    types_1hot = torch.tensor(types_1hot).float()
-    neuron_hash = {uniqtypes[i]:np.where(typeclasses == i)[0] for i in range(Ntypes)}
-    return types_1hot, Ntypes, typehash, uniqtypes, neuron_hash
+        Returns:
+        types_1hot: NxNtype torch tensor, the one-hot encoding of neuron types
+        Ntypes: int, the number of unique types
+        typehash: dict, the mapping from type string to type index
+        uniqtypes: list of str, the list of unique types
+        neu
+        """
+        uniqtypes = pd.unique(neurons[type_key])
+        Ntypes = len(uniqtypes)
+        typehash = dict(zip(uniqtypes, np.arange(Ntypes)))
+        typeclasses = np.array([typehash[x] for x in neurons[type_key]])
+
+        types_1hot = np.zeros([len(neurons), Ntypes])
+        types_1hot[np.arange(len(neurons)), typeclasses] = 1.
+        types_1hot = torch.tensor(types_1hot).float()
+        neuron_hash = {uniqtypes[i]:np.where(typeclasses == i)[0] for i in range(Ntypes)}
+        return types_1hot, Ntypes, typehash, uniqtypes, neuron_hash
+
+    def __init__(self, J, neurons:pandas.DataFrame, type_key:str):
+        """
+        Data object of a connectivity matrix and information about neurons.
+
+        Args:
+            J: NxN torch tensor, the connectivity matrix
+            onehot_types: NxNtype torch tensor, the one-hot encoding of neuron types
+            type_hash: dict, the mapping from type string to type index
+            types: list of str, the list of unique types
+            neuron_hash: dict, the mapping from type index to neuron indices
+            N_per_type: list of int, the number of neurons of each type
+            neurons: pandas DataFrame, the information about each neuron
+        """
+        self.J = J
+        self.N = J.shape[0]
+
+        onehot_types, Ntype, typehash, uniqtypes, neuron_hash = \
+            self.make_onehot_type_vectors(neurons, type_key)
+        
+        self.onehot_types = onehot_types
+        self.Ntype = Ntype
+        self.type_hash = typehash
+        self.types = uniqtypes
+        self.neuron_hash = neuron_hash
+        self.N_per_type = onehot_types.sum(0).numpy().astype(np.int16)
+        self.neurons = neurons
+
+        assert self.onehot_types.shape == (self.N, self.Ntype)
+        assert len(self.types) == self.Ntype
 
 
 def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     """
-    Load the J matrix and neuron information from the csv files in the given directory.
+    Load the J matrix and neuron information from the csv files in the given
+    directory.
     Only keep neurons of types with at least min_num_per_type neurons.
 
     Returns:
-    Jall: the connectivity matrix (element i,j is the number of synapses from neuron j to neuron i)
+    Jall: the connectivity matrix (element i,j is the number of synapses from
+    neuron j to neuron i)
     neuronsall: a pandas dataframe with information about each neuron
     """
     # load information about traced neurons and traced connections
@@ -66,68 +117,31 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     return Jall[inds_to_keep][:, inds_to_keep], neuronsall.take(inds_to_keep)
 
 
-def get_Jall_neuronall_flywire(datapath = ""):
-    neuronsall = pd.read_csv(datapath + "neurons.csv")
-    classif = pd.read_csv(datapath + "classification.csv")
-    visual_types = pd.read_csv(datapath + "visual_neuron_types.csv")
-    neuronsall = neuronsall.merge(classif, on="root_id", how="left")
-    neuronsall = neuronsall.merge(visual_types, on="root_id", how="left")
-    neuronsall.rename(columns={'type': "visual_type", 'family':'visual_family',
-                            'subsystem':'visual_subsystem'}, inplace=True)
-    conns = pd.read_csv(datapath + "connections.csv")
-
-    Nall = len(neuronsall)
-    idhash = dict(zip(neuronsall.root_id,np.arange(Nall)))
-    neuronsall['J_idx'] = neuronsall['J_idx_post'] = neuronsall['J_idx_pre'] = neuronsall.root_id.apply(lambda x: idhash[x])
-    preinds = [idhash[x] for x in conns.pre_root_id]
-    postinds = [idhash[x] for x in conns.post_root_id]
-    # Jall = np.zeros([Nall, Nall], dtype=np.uint)
-    # Jall[postinds, preinds] = conns.syn_count
-    Jall = csr_matrix((conns.syn_count, (postinds, preinds)), shape=(Nall, Nall), dtype="int16")
-
-    return neuronsall, Jall
-
-def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
+def prep_connectivity_data(full_J_mat,
+                           all_neurons: pd.DataFrame,
+                           types_wanted=[],
+                           split_LR=None):
     """
-    Get indices of neurons whose type contains one of the strings in types_wanted.
+    Prepares the connectivity data for training. Selects only neurons of types
+    containing one of the strings in types_wanted. Optionally, sorts neurons
+    into left and right based on the instance name (in hemibrain data, some
+    neurons have type names such as 'EPG_L' and 'EPG_R').
 
-    the "type" used for each neuron is specified by `type_key`, which should be 
-    one of the columns of neuronall.
+    Important: the returned J matrix is transposed, so that J[i,j] is the number
+    of synapses from neuron i to neuron j.
+
+    Args:
+    full_J_mat: NxN numpy array, the full connectivity matrix. Element i,j is
+    the number of synapses from neuron j to neuron i.
+    all_neurons: pandas DataFrame, the information about each neuron
+    types_wanted: list of str, the list of strings to search for in neuron types
+    split_LR: if the neuron type contains one of these strings, split neurons
+    of this type into two types, one for left and one for right. Setting it to
+    None will split all types.
+
+    Returns:
     """
-
-    def _sortsubtype(t, list_of_types):
-        """
-        Get indices of neurons whose type contains the string t.
-        if the string ends with '=', then only neurons of that exact type are
-        included.
-        """
-
-        if t[-1] == '=':
-            t = t[:-1]
-            inds = np.nonzero([t == x for x in list_of_types])[0]
-        else:
-            inds = np.nonzero([t in x for x in list_of_types])[0]
-        sortinds = np.argsort(list_of_types[inds])
-        inds = inds[sortinds]
-        return inds
-
-    list_of_types = np.array(neuronall[type_key]).astype(str)
-
-    output = []
-    for t in types_wanted:
-        if type(t) == float:
-            continue
-        output.append(_sortsubtype(t, list_of_types))
-
-    return np.concatenate(output)
-
-
-def prep_connectivity_data(full_J_mat, all_neurons, types_wanted=[], split_LR=None):
-    """
-    Produce J and one-hot type vectors in torch tensor format. Include only
-    neurons of types in types_wanted.
-    """
-
+    
     allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
 
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
@@ -175,16 +189,73 @@ def prep_connectivity_data(full_J_mat, all_neurons, types_wanted=[], split_LR=No
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
-
+    J_data = utils.ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
 
     return J_data
 
 
-def prep_connectivity_data_flywire(full_J_mat, all_neurons, types_wanted=[], split_LR=None):
+def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
     """
-    Produce J and one-hot type vectors in torch tensor format. Include only
-    neurons of types in types_wanted.
+    Get indices of neurons whose type contains one of the strings in types_wanted.
+
+    the "type" used for each neuron is specified by `type_key`, which should be 
+    one of the columns of neuronall.
+    """
+
+    def _sortsubtype(t, list_of_types):
+        """
+        Get indices of neurons whose type contains the string t.
+        if the string ends with '=', then only neurons of that exact type are
+        included.
+        """
+
+        if t[-1] == '=':
+            t = t[:-1]
+            inds = np.nonzero([t == x for x in list_of_types])[0]
+        else:
+            inds = np.nonzero([t in x for x in list_of_types])[0]
+        sortinds = np.argsort(list_of_types[inds])
+        inds = inds[sortinds]
+        return inds
+
+    list_of_types = np.array(neuronall[type_key]).astype(str)
+
+    output = []
+    for t in types_wanted:
+        if type(t) == float:
+            continue
+        output.append(_sortsubtype(t, list_of_types))
+
+    return np.concatenate(output)
+
+
+def get_Jall_neuronall_flywire(datapath = ""):
+    neuronsall = pd.read_csv(datapath + "neurons.csv")
+    classif = pd.read_csv(datapath + "classification.csv")
+    visual_types = pd.read_csv(datapath + "visual_neuron_types.csv")
+    neuronsall = neuronsall.merge(classif, on="root_id", how="left")
+    neuronsall = neuronsall.merge(visual_types, on="root_id", how="left")
+    neuronsall.rename(columns={'type': "visual_type", 'family':'visual_family',
+                            'subsystem':'visual_subsystem'}, inplace=True)
+    conns = pd.read_csv(datapath + "connections.csv")
+
+    Nall = len(neuronsall)
+    idhash = dict(zip(neuronsall.root_id,np.arange(Nall)))
+    neuronsall['J_idx'] = neuronsall['J_idx_post'] = neuronsall['J_idx_pre'] = neuronsall.root_id.apply(lambda x: idhash[x])
+    preinds = [idhash[x] for x in conns.pre_root_id]
+    postinds = [idhash[x] for x in conns.post_root_id]
+    # Jall = np.zeros([Nall, Nall], dtype=np.uint)
+    # Jall[postinds, preinds] = conns.syn_count
+    Jall = csr_matrix((conns.syn_count, (postinds, preinds)), shape=(Nall, Nall), dtype="int16")
+
+    return neuronsall, Jall
+
+
+def prep_connectivity_data_flywire(
+        full_J_mat, all_neurons, types_wanted=[], split_LR=None):
+    """
+    Important: the returned J matrix is transposed, so that J[i,j] is the number
+    of synapses from neuron i to neuron j.
     """
 
     allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
@@ -194,13 +265,12 @@ def prep_connectivity_data_flywire(full_J_mat, all_neurons, types_wanted=[], spl
     neurons = all_neurons.iloc[allcx, :]
     neurons.reset_index(inplace=True)
 
-    # sort neurons into left and right based on some hemibrain specific rules
+    # sort neurons into left and right (this is supplied directly in flywire)
     for i in range(N):
         if split_LR is None or np.sum([t in neurons.type[i] for t in split_LR]) > 0:
 
             neuron_side = neurons.side[i]
 
-            # if the instance name ends with _L/R; this covers most neurons
             if neuron_side == 'left':
                 neurons.loc[i, 'type'] += '_L'
                 continue
@@ -213,7 +283,7 @@ def prep_connectivity_data_flywire(full_J_mat, all_neurons, types_wanted=[], spl
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
+    J_data = utils.ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
 
 
     return J_data
