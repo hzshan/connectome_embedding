@@ -5,6 +5,8 @@
 *.svg
 *.pyc
 *.pkl
-hemibrain/
-flywire/
+data_hemibrain/
+data_flywire/
+Figures/
+Archive/
 Connectivity_data_from_manuel/
