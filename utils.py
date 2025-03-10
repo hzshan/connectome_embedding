@@ -42,7 +42,7 @@ def make_circle(n_points, wrap=False):
     return unit_circle
 
 
-def tick_maker(unique_types, onehot_types, return_idx=False):
+def tick_maker(unique_types, onehot_types, return_idx=False, include_counts=True):
     """
     Make tick labels for plotting. If dont_count is True, return the indices.
     """
@@ -51,7 +51,10 @@ def tick_maker(unique_types, onehot_types, return_idx=False):
     n_per_type = onehot_types.sum(0)
     for i, ut in enumerate(unique_types):
         tick_inds.append(torch.sum(n_per_type[:i]) + n_per_type[i] / 2)
-        tick_labels.append(ut + f" ({int(n_per_type[i])})")
+        if include_counts:
+            tick_labels.append(ut + f" ({int(n_per_type[i])})")
+        else:
+            tick_labels.append(ut)
     if return_idx:
         return np.arange(len(unique_types)), tick_labels
     else:
