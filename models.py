@@ -36,8 +36,15 @@ class Model:
 
         self.params = [self.embeddings, self.A, self.B, self.C]
 
-        assert wrapper_fn in ['exp', 'relu']
-        self.wrapper_fn = 'exp'
+        assert wrapper_fn in ['exp', 'softplus']
+
+
+    def wrapper_fn(self, x):
+        """A nonlinear function to keep the predicted synaptic number positive."""
+        if self.wrapper_fn == 'exp':
+            return torch.exp(x)
+        else:
+            return torch.nn.functional.softplus(x)
 
 
     def pred_synapses(self):
@@ -56,7 +63,7 @@ class Model:
         content = scaling * torch.exp(-utils.get_squared_dist(
             self.embeddings, self.embeddings) / covar) + bias
 
-        mean = torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+        mean = self.wrapper_fn(content)
 
         return mean - torch.diag(mean.diag())  # remove self-connections
 
@@ -140,7 +147,7 @@ class SourceTargetModel(Model):
 
         content = scaling * torch.exp(-dist / covar) + bias
 
-        return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+        return  self.wrapper_fn(content)
     
 
 class InteractionModel(Model):
@@ -258,7 +265,7 @@ class InteractionModel(Model):
 
         content = scaling * torch.exp(-dist / covar) + bias
 
-        return  torch.exp(content) if self.wrapper_fn == 'exp' else torch.relu(content)
+        return self.wrapper_fn(content)
 
 def train_model(model, target_mat,
                 loss_type='poisson', lr=0.01, steps=40000,
