@@ -189,7 +189,7 @@ def prep_connectivity_data(full_J_mat,
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    J_data = utils.ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
+    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
 
     return J_data
 
@@ -201,6 +201,10 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
     the "type" used for each neuron is specified by `type_key`, which should be 
     one of the columns of neuronall.
     """
+
+    if types_wanted is None:
+        print('No types specified. Grabbing all types.')
+        types_wanted = list(neuronall[type_key].unique())
 
     def _sortsubtype(t, list_of_types):
         """
@@ -283,7 +287,7 @@ def prep_connectivity_data_flywire(
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    J_data = utils.ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
+    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
 
 
     return J_data
