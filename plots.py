@@ -4,14 +4,15 @@ Helpful plots to make.
 
 import numpy as np
 import matplotlib.pyplot as plt
-import data_utils, torch, utils, models
+import data_utils, torch, utils, models, data_utils
 from matplotlib.colors import LogNorm
 
 
 def plot_J_some_types(J: torch.Tensor,
                       types: list,
-                      data:utils.ConnectivityData,
-                      ax=None):
+                      data:data_utils.ConnectivityData,
+                      ax=None,
+                      cell_count_in_ticks=False):
 
     if ax is None:
         plt.figure()
@@ -27,8 +28,8 @@ def plot_J_some_types(J: torch.Tensor,
     J_submatrix = J[all_neuron_inds][:, all_neuron_inds]
 
     plt.imshow(np.log(1 + J_submatrix), cmap='gray_r', interpolation='none')
-    plt.xticks(*utils.tick_maker(types, all_onehots))
-    plt.yticks(*utils.tick_maker(types, all_onehots))
+    plt.xticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
+    plt.yticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
 
     return J_submatrix
 
@@ -71,7 +72,7 @@ def stacked_bar_plot(labels: list,
 
 
 def summarize_adjacency_for_type(inquiry_type: str,
-                                 data:utils.ConnectivityData,
+                                 data:data_utils.ConnectivityData,
                                  cutoff=0,
                                  ax=None):
     """
@@ -125,17 +126,27 @@ def summarize_embeddings_for_types(list_of_types, model, typehash):
     _ = plt.xticks(rotation=45)
 
 
-def plot_J(J, data: utils.ConnectivityData, types: list=None, N_per_type=None, ax=None, type_borders=True):
+def plot_J(J, data: utils.ConnectivityData,
+           types: list=None,
+           N_per_type=None,
+           ax=None,
+           type_borders=True,
+           tick_fontsize=5,
+           vmax=None, dont_log=False):
     if ax is None:
         ax = plt.gca()
 
     plt.sca(ax)
-    plt.imshow(np.log(1 + J), cmap='gray_r', interpolation='none')
+
     tick_inds = []
     tick_labels = []
 
     if types is None:
         types = data.types
+    else:
+        N_per_type = np.zeros(len(types))
+        for i, t in enumerate(types):
+            N_per_type[i] = len(data.neuron_hash[t])
     if N_per_type is None:
         N_per_type = data.N_per_type
     if len(types) != len(N_per_type):
@@ -145,27 +156,41 @@ def plot_J(J, data: utils.ConnectivityData, types: list=None, N_per_type=None, a
         tick_inds.append(np.sum(N_per_type[:i]) + N_per_type[i] / 2)
         tick_labels.append(ut)
 
+    # plt.imshow(np.log(1 + J), cmap='gray_r', interpolation='none')
+    neuron_inds = np.concatenate([data.neuron_hash[t] for t in types])
+    J_subset = J[neuron_inds][:, neuron_inds]
+
+    if dont_log:
+        plt.imshow(J_subset, cmap='gray_r', interpolation='none', vmax=vmax)
+    else:
+        plt.imshow(1 + J_subset, cmap='gray_r', interpolation='none', norm=LogNorm(vmax=vmax))
+
     if type_borders:
         sum_till_now = 0
         for i in range(0, len(N_per_type) - 1):
             sum_till_now += N_per_type[i]
-            plt.axvline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.5)
-            plt.axhline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.5)
-    plt.xticks(tick_inds, tick_labels, rotation=90, fontsize=7)
-    plt.yticks(tick_inds, tick_labels, rotation=0, fontsize=7)
+            plt.axvline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.2)
+            plt.axhline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.2)
+    plt.xticks(tick_inds, tick_labels, rotation=90, fontsize=tick_fontsize)
+    plt.yticks(tick_inds, tick_labels, rotation=0, fontsize=tick_fontsize)
     return tick_inds, tick_labels
 
 
-def plot_embeddings_in_2d(cell_types, data, model, ax=None):
+def plot_embeddings_in_2d(types, data, model, ax=None, center_embs=False, scatter_kwargs={}):
+
+    if type(types) is str:
+        types = [types]
     if ax is None:
         plt.figure()
     else:
         plt.sca(ax)
-    for i, t in enumerate(cell_types):
+    for i, t in enumerate(types):
         embs = model.embeddings[data.neuron_hash[t]]
+        if center_embs:
+            embs = embs - torch.mean(embs)
         embs_2d, _, _ = utils.solve_shadowmatic2(embs, nseeds_to_try=50)
         
-        plt.scatter(embs_2d[:, 0], embs_2d[:, 1], label=t)
+        plt.scatter(embs_2d[:, 0], embs_2d[:, 1], label=t, **scatter_kwargs)
 
     unit_circle = utils.make_circle(100, wrap=True)
     plt.plot(unit_circle[:, 0], unit_circle[:, 1], 'k')
