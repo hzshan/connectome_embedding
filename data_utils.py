@@ -149,6 +149,9 @@ def prep_connectivity_data(full_J_mat,
     neurons = all_neurons.iloc[allcx, :]
     neurons.reset_index(inplace=True)
 
+    if split_LR is None:
+        print('Will attempt to split all types into left and right.')
+
     # sort neurons into left and right based on some hemibrain specific rules
     for i in range(N):
         if split_LR is None or np.sum([t in neurons.type[i] for t in split_LR]) > 0:
