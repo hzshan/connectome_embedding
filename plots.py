@@ -12,14 +12,23 @@ def plot_J_some_types(J: torch.Tensor,
                       types: list,
                       data:data_utils.ConnectivityData,
                       ax=None,
-                      cell_count_in_ticks=False):
+                      cell_count_in_ticks=False,
+                      shuffle_within_types=False,
+                      vmax=None):
 
     if ax is None:
-        plt.figure()
+        ax = plt.gca()
     else:
         plt.sca(ax)
 
-    all_neuron_inds = np.concatenate([data.neuron_hash[t] for t in types])
+    all_neuron_inds = []
+    for t in types:
+        if shuffle_within_types:
+            all_neuron_inds.append(data.neuron_hash[t][np.random.permutation(len(data.neuron_hash[t]))])
+        else:
+            all_neuron_inds.append(data.neuron_hash[t])
+    
+    all_neuron_inds = np.concatenate(all_neuron_inds)
     # get a sorting of cells from this type
     all_type_inds = np.array([data.type_hash[t] for t in types])
     all_onehots = data.onehot_types[all_neuron_inds]
@@ -27,7 +36,7 @@ def plot_J_some_types(J: torch.Tensor,
 
     J_submatrix = J[all_neuron_inds][:, all_neuron_inds]
 
-    plt.imshow(np.log(1 + J_submatrix), cmap='gray_r', interpolation='none')
+    plt.imshow(np.log(1 + J_submatrix), cmap='gray_r', interpolation='none', vmax=vmax)
     plt.xticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
     plt.yticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
 
@@ -96,6 +105,7 @@ def summarize_adjacency_for_type(inquiry_type: str,
     stacked_bar_plot(connected_types, in_out_counts, colors=None, legends=['in', 'out'])
     plt.ylabel('synapses per neuron')
     plt.title('adjacency summary for ' + inquiry_type)
+    plt.tight_layout()
 
     return connected_types, in_out_counts
 
@@ -163,7 +173,7 @@ def plot_J(J, data: utils.ConnectivityData,
     if dont_log:
         plt.imshow(J_subset, cmap='gray_r', interpolation='none', vmax=vmax)
     else:
-        plt.imshow(1 + J_subset, cmap='gray_r', interpolation='none', norm=LogNorm(vmax=vmax))
+        plt.imshow(np.log(1 + J_subset), cmap='gray_r', interpolation='none', vmax=vmax)
 
     if type_borders:
         sum_till_now = 0
@@ -181,7 +191,7 @@ def plot_embeddings_in_2d(types, data, model, ax=None, center_embs=False, scatte
     if type(types) is str:
         types = [types]
     if ax is None:
-        plt.figure()
+        plt.gca()
     else:
         plt.sca(ax)
     for i, t in enumerate(types):

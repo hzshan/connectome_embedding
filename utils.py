@@ -6,17 +6,6 @@ import matplotlib.pyplot as plt
 from data_utils import ConnectivityData
 
 
-
-
-def get_squared_dist(source_emb, target_emb):
-    """
-    Assuming a NxD shape, return a NxN matrix of squared distances."""
-    source_sum_sq = torch.sum(source_emb * source_emb, 1, keepdim=True)
-    target_sum_sq = torch.sum(target_emb * target_emb, 1, keepdim=True)
-
-    return source_sum_sq + target_sum_sq.T - 2 * (source_emb @ target_emb.T)
-
-
 def make_rotation_mats(rotation_params):
     """
     rotation_params: (Ntype, D, D)
@@ -36,7 +25,7 @@ def make_circle(n_points, wrap=False):
     if wrap:
         angles = torch.linspace(0, 2 * np.pi, n_points + 1)
     else:
-        angles = torch.linspace(0, 2 * np.pi, n_points)
+        angles = torch.arange(n_points) * 2 * np.pi / n_points
     unit_circle = torch.stack([torch.cos(angles), torch.sin(angles)], 1)
 
     return unit_circle
@@ -321,26 +310,6 @@ def find_perm(target, embeddings):
     return perm_mat.T, perm_mat.T @ embeddings
 
 
-def find_best_proj(target, embeddings):
-    """
-    Solves the linear least square problem to find the best Dx2 projection
-    P such that ||T - E @ P|| is minimized, where T is the target and E is the
-    permuted embeddings.
-
-    Args:
-        target: Nx2 tensor, the target embeddings
-        embeddings: NxD tensor, the embeddings
-    
-    Returns:
-        best_proj: Dx2 tensor, the best projection matrix
-    """
-    N, _ = target.shape
-    assert embeddings.shape[0] == N
-    regularizer = torch.eye(embeddings.shape[1]) * 1e-6
-
-    return torch.inverse(embeddings.T @ embeddings + regularizer) @ embeddings.T @ target
-
-
 def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
     """
     Finds the best Dx2 projection of the given set of points that distributes
@@ -393,7 +362,7 @@ def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
 
             total_perm = best_perm @ total_perm
 
-            best_proj = find_best_proj(circle, embeddings0)
+            best_proj = torch.linalg.lstsq(embeddings0, circle).solution
 
             if torch.allclose(curr_best_proj, best_proj):
                 break
@@ -455,7 +424,7 @@ def circ_score_via_norm(embeddings_2d, skip_alignment=False):
         best_perm, _ = find_perm(unit_circle, embeddings0)
         embeddings0 = best_perm @ embeddings0
 
-        two_by_two_proj = find_best_proj(unit_circle, embeddings0)
+        two_by_two_proj = torch.linalg.lstsq(embeddings0, unit_circle).solution
 
         embeddings0 = embeddings0 @ two_by_two_proj
         embeddings0 = embeddings0 - embeddings0.mean(0)

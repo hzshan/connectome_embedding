@@ -60,8 +60,8 @@ class Model:
         covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
         bias = self.onehot_types @ self.B @ self.onehot_types.T
 
-        content = scaling * torch.exp(-utils.get_squared_dist(
-            self.embeddings, self.embeddings) / covar) + bias
+        content = scaling * torch.exp(-torch.cdist(
+            self.embeddings, self.embeddings)**2 / covar) + bias
 
         mean = self.wrapper_fn(content)
 
@@ -100,10 +100,10 @@ class AsymModel(Model):
 
         bias = ctype_onehots @ self.B @ ctype_onehots.T
 
-        sym_part = scaling * torch.exp(-utils.get_squared_dist(
-            self.embeddings) / covar)
-        asym_part = scaling_asym * torch.exp(-utils.get_squared_dist(
-            self.asym_embeddings) / covar_asym)
+        sym_part = scaling * torch.exp(-torch.cdist(
+            self.embeddings, self.embeddings)**2 / covar)
+        asym_part = scaling_asym * torch.exp(-torch.cdist(
+            self.asym_embeddings, self.asym_embeddings)**2 / covar_asym)
 
         # return  torch.exp(scaling * torch.exp(-sq_dist_mat / covar) + bias)
 
@@ -143,9 +143,9 @@ class SourceTargetModel(Model):
         source_emb = self.embeddings
         target_emb = self.embeddings + self.target_modifier
 
-        dist = utils.get_squared_dist(source_emb, target_emb)
+        dist_sq = torch.cdist(source_emb, target_emb)**2
 
-        content = scaling * torch.exp(-dist / covar) + bias
+        content = scaling * torch.exp(-dist_sq / covar) + bias
 
         return  self.wrapper_fn(content)
     
@@ -211,21 +211,6 @@ class InteractionModel(Model):
 
     def get_rotation_mats(self):
         return utils.make_rotation_mats(self.rotation_params)
-    
-    # def get_dist_mat(self, ctype_onehots):
-    #     rotation_mats = self.get_rotation_mats()
-
-    #     _N, _Ntype = ctype_onehots.size()
-    #     dist = torch.zeros((_N, _N))
-
-    #     for i in range(_Ntype):
-    #         for j in range(_Ntype):
-    #             source_inds = torch.nonzero(ctype_onehots[:, i]).squeeze()
-    #             target_inds = torch.nonzero(ctype_onehots[:, j]).squeeze()
-    #             source_embs = self.embeddings[source_inds]
-    #             target_embs = self.embeddings[target_inds] @ rotation_mats[i, j] + self.translation_vecs[i, j]
-    #             dist[source_inds[:, None], target_inds] = get_squared_dist(source_embs, target_embs)
-    #     return dist
 
 
     def get_dist_mat_with_transforms(self):
@@ -259,17 +244,18 @@ class InteractionModel(Model):
         # cross_term = source_emb @ target_emb.T
         # dist = emb_sum + target_sum.T - 2 * cross_term
         if self.use_transforms:
-            dist = self.get_dist_mat_with_transforms()
+            dist_sq = self.get_dist_mat_with_transforms()
         else:
-            dist = utils.get_squared_dist(self.embeddings, self.embeddings)
+            dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
 
-        content = scaling * torch.exp(-dist / covar) + bias
+        content = scaling * torch.exp(-dist_sq / covar) + bias
+        # content = -dist * scaling + bias
 
         return self.wrapper_fn(content)
 
 def train_model(model, target_mat,
                 loss_type='poisson', lr=0.01, steps=40000,
-                print_every=2000, reg_fn=None):
+                print_every=2000, reg_fn=None, train_inds=None, test_inds=None):
     """
     Train an embedding model to fit the connectivity matrix.
 
@@ -277,8 +263,16 @@ def train_model(model, target_mat,
 
     # only compute loss on off-diagonal elements of J
     _N = target_mat.shape[0]
-    validinds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
-    yvalid = target_mat.flatten()[validinds]
+
+    if train_inds is None:
+        train_inds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
+    y_train = target_mat.flatten()[train_inds]
+
+
+    if test_inds is not None:
+        y_test = target_mat.flatten()[test_inds]
+    else:
+        y_test = None
 
     optim = torch.optim.Adam(params=model.params, lr=lr)
 
@@ -292,13 +286,13 @@ def train_model(model, target_mat,
     for i in tqdm.trange(steps):
         optim.zero_grad()
 
-        preds = model.pred_synapses()
+        flat_preds = model.pred_synapses().flatten()
 
         if loss_type == 'poisson':
-            loss = possion_loss(preds.flatten()[validinds], yvalid)
+            loss = possion_loss(flat_preds[train_inds], y_train)
         else:
             assert loss_type == 'mse'
-            loss = torch.norm(preds.flatten()[validinds] - yvalid)**2
+            loss = torch.norm(flat_preds.flatten()[train_inds] - y_train)**2
 
 
         if reg_fn is not None:
@@ -319,10 +313,13 @@ def train_model(model, target_mat,
         #     rotation_norms[i] = torch.norm(model.rotation_params).detach().numpy()
 
         if loss_type == 'mse':
-            losses[i] /= (torch.norm(yvalid)**2).numpy()
+            losses[i] /= (torch.norm(y_train)**2).numpy()
 
         if (i+1) % print_every == 0:
             print(i, f'normalized loss: {losses[i]:.4f}',
                 f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**2 / _N:.2f}')
+            if y_test is not None:
+                test_loss = possion_loss(flat_preds[test_inds], y_test)
+                print(f'test loss: {test_loss:.4f}')
     
     return losses, embedding_norms, rotation_norms
