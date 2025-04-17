@@ -158,35 +158,8 @@ def prep_connectivity_data(full_J_mat,
 
             neuron_name = neurons.instance[i]
 
-            # if the instance name ends with _L/R; this covers most neurons
-            if neuron_name[-2:] == '_L':
-                neurons.loc[i, 'type'] += '_L'
-                continue
-
-            if neuron_name[-2:] == '_R':
-                neurons.loc[i, 'type'] += '_R'
-                continue
-
-            # this covers a few FR2(FQ4), PFNp_d, SCL-AVLP neurons
-            if '_L_' in neuron_name:
-                neurons.loc[i, 'type'] += '_L'
-                continue
-            if '_R_' in neuron_name:
-                neurons.loc[i, 'type'] += '_R'
-                continue
-
-            # this handles a few PFGs(PB10) neurons
-            if 'irreg' in neuron_name:
-                neurons.loc[i, 'type'] += '_irreg'
-                continue
-
-            # the neurons that are left are usually labeled as 'L4' or 'R5' etc.
-            if '_L' in neuron_name[-6:]:
-                neurons.loc[i, 'type'] += '_L'
-                continue
-
-            if '_R' in neuron_name[-6:]:
-                neurons.loc[i, 'type'] += '_R'
+            LR_suffix = hemibrain_LR(neuron_name)
+            neurons.loc[i, 'type'] += LR_suffix
 
     new_type_sort = np.argsort(neurons.type)
     neurons = neurons.iloc[new_type_sort, :]
@@ -294,3 +267,38 @@ def prep_connectivity_data_flywire(
 
 
     return J_data
+
+
+def hemibrain_LR(neuron_name):
+    """
+    Try to figure out the L/R of each neuron from its neuron_name.
+    This is necessary since L/R is not directly labeled in hemibrain.
+    Produces a suffix to be attached to the type of the neuron.
+    """
+
+    # if the instance name ends with _L/R; this covers most neurons
+    if neuron_name[-2:] == '_L':
+        return '_L'
+
+    if neuron_name[-2:] == '_R':
+        return '_R'
+
+    # this covers a few FR2(FQ4), PFNp_d, SCL-AVLP neurons
+    if '_L_' in neuron_name:
+        return '_L'
+
+    if '_R_' in neuron_name:
+        return '_R'
+
+    # this handles a few PFGs(PB10) neurons
+    if 'irreg' in neuron_name:
+        return '_irreg'
+
+    # the neurons that are left are usually labeled as 'L4' or 'R5' etc.
+    if '_L' in neuron_name[-6:]:
+        return '_L'
+
+    if '_R' in neuron_name[-6:]:
+        return '_R'
+    
+    return ''
