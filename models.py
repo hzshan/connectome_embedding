@@ -280,8 +280,8 @@ def train_model(model, target_mat,
     embedding_norms = np.zeros(steps)
     rotation_norms = np.zeros(steps)
 
-    if loss_type == 'poisson':
-        possion_loss = torch.nn.PoissonNLLLoss(log_input=False)
+    poisson_loss = torch.nn.PoissonNLLLoss(log_input=False)
+
 
     for i in tqdm.trange(steps):
         optim.zero_grad()
@@ -289,10 +289,16 @@ def train_model(model, target_mat,
         flat_preds = model.pred_synapses().flatten()
 
         if loss_type == 'poisson':
-            loss = possion_loss(flat_preds[train_inds], y_train)
+            loss = poisson_loss(flat_preds[train_inds], y_train)
         else:
             assert loss_type == 'mse'
-            loss = torch.norm(flat_preds.flatten()[train_inds] - y_train)**2
+            # loss = -torch.dot(2 * torch.sigmoid(flat_preds[train_inds])-1, y_train) -\
+            #       torch.dot(2-2*torch.sigmoid(flat_preds[train_inds]), 1 - y_train)
+            # torch.binary_cross_entropy_with_logits(
+            #     , reduction=1)
+            # loss = torch.norm(flat_preds[train_inds] - y_train)**2
+            loss = torch.sum((flat_preds[train_inds] - y_train)**2 / (1 + flat_preds[train_inds])**2)
+            # loss = torch.sum((torch.log(flat_preds[train_inds] + 1e-1) - torch.log(y_train + 1e-1))**2)
 
 
         if reg_fn is not None:
@@ -319,7 +325,7 @@ def train_model(model, target_mat,
             print(i, f'normalized loss: {losses[i]:.4f}',
                 f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**2 / _N:.2f}')
             if y_test is not None:
-                test_loss = possion_loss(flat_preds[test_inds], y_test)
+                test_loss = poisson_loss(flat_preds[test_inds], y_test)
                 print(f'test loss: {test_loss:.4f}')
     
     return losses, embedding_norms, rotation_norms
