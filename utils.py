@@ -1,8 +1,6 @@
 import numpy as np
 import torch
 import scipy, data_utils, pandas, tqdm, data_utils
-from matplotlib.animation import FuncAnimation
-import matplotlib.pyplot as plt
 from data_utils import ConnectivityData
 
 
@@ -51,7 +49,7 @@ def tick_maker(unique_types, onehot_types, return_idx=False, include_counts=True
 
 
 def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
-                    full_method=False):
+                    full_method=False, reference_type=None):
     """
     Sort the embeddings. 
     
@@ -74,9 +72,15 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
     Returns:
     sorted_inds: N-dim np.array, the indices of the sorted embeddings
     """
-
-    _, _, V = torch.svd(embeddings)
-    projected_all_embeddings = embeddings @ V
+    if reference_type is None:
+        _, _, V = torch.svd(embeddings)
+        projected_all_embeddings = embeddings @ V
+    else:
+        ref_embeddings = embeddings[data.neuron_hash[reference_type]]
+        _, proj, _  = solve_shadowmatic2(
+            ref_embeddings, nseeds_to_try=50, max_iter=10
+        )
+        projected_all_embeddings = embeddings @ proj
 
     sorted_inds = []
 
@@ -325,8 +329,7 @@ def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
     Returns:
         projected_embeddings: Nx2 tensor, the projected points, ordered along the circle
         best_proj: Dx2 tensor, the best projection matrix
-        best_perm: the permutation matrix used on the embeddings; 
-            best_perm.T @ projected_embeddings recovers the original ordering
+        best_perm: the permutation matrix used on the embeddings; best_perm.T @ projected_embeddings recovers the original ordering
     """
     projected_embs_across_seeds = []
     scores = []
