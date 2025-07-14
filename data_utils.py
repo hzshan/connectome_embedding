@@ -20,7 +20,6 @@ import numpy as np
 import torch
 import pandas
 from scipy.sparse import csr_matrix
-import utils
 
 
 class ConnectivityData:
@@ -62,7 +61,7 @@ class ConnectivityData:
             N_per_type: list of int, the number of neurons of each type
             neurons: pandas DataFrame, the information about each neuron
         """
-        self.J = J
+        self.J = torch.tensor(J)
         self.N = J.shape[0]
 
         onehot_types, Ntype, typehash, uniqtypes, neuron_hash = \
@@ -232,13 +231,13 @@ def get_Jall_neuronall_flywire(datapath = ""):
 
 
 def prep_connectivity_data_flywire(
-        full_J_mat, all_neurons, types_wanted=[], split_LR=None):
+        full_J_mat, all_neurons, types_wanted=[], split_LR=None, type_key='visual_type'):
     """
     Important: the returned J matrix is transposed, so that J[i,j] is the number
     of synapses from neuron i to neuron j.
     """
 
-    allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
+    allcx = get_inds_by_type(all_neurons, type_key, types_wanted)
 
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
     N = J.shape[0]
@@ -252,18 +251,18 @@ def prep_connectivity_data_flywire(
             neuron_side = neurons.side[i]
 
             if neuron_side == 'left':
-                neurons.loc[i, 'type'] += '_L'
+                neurons.loc[i, type_key] += '_L'
                 continue
 
             if neuron_side == 'right':
-                neurons.loc[i, 'type'] += '_R'
+                neurons.loc[i, type_key] += '_R'
                 continue
 
-    new_type_sort = np.argsort(neurons.type)
+    new_type_sort = np.argsort(neurons[type_key])
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
 
-    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
+    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, type_key)
 
 
     return J_data
