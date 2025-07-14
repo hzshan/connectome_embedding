@@ -74,7 +74,7 @@ def stacked_bar_plot(labels: list,
         left += bar_heights[:, i]
 
     # rotate xlabels
-    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=6)
     plt.legend()
     
     return ax
@@ -96,7 +96,8 @@ def summarize_adjacency_for_type(inquiry_type: str,
         cutoff: only show connections with more than this number of synapses per neuron
         ax: the axis to plot on
     """
-    connected_types, in_out_counts = utils.get_adjacency_of_type(inquiry_type, data, cutoff=cutoff)
+    connected_types, in_out_counts = utils.get_adjacency_of_type(
+        inquiry_type, data, cutoff=cutoff)
 
     if ax is None:
         plt.figure(figsize=(5, 2), dpi=200)
