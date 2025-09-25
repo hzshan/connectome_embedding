@@ -141,7 +141,7 @@ def prep_connectivity_data(full_J_mat,
     Returns:
     """
     
-    allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
+    allcx = get_inds_by_type(all_neurons, 'type', np.unique(types_wanted))
 
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
     N = J.shape[0]
@@ -163,6 +163,8 @@ def prep_connectivity_data(full_J_mat,
     new_type_sort = np.argsort(neurons.type)
     neurons = neurons.iloc[new_type_sort, :]
     J = J[new_type_sort, :][:, new_type_sort]
+
+    neurons.reset_index(inplace=True)
 
     J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
 
@@ -186,11 +188,16 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
         Get indices of neurons whose type contains the string t.
         if the string ends with '=', then only neurons of that exact type are
         included.
+        if the string ends with '*", then only neurons of a type starting with that
+        string are included.
         """
 
         if t[-1] == '=':
             t = t[:-1]
             inds = np.nonzero([t == x for x in list_of_types])[0]
+        elif t[-1] == '*':
+            t = t[:-1]
+            inds = np.nonzero([x.startswith(t) for x in list_of_types])[0]
         else:
             inds = np.nonzero([t in x for x in list_of_types])[0]
         sortinds = np.argsort(list_of_types[inds])
