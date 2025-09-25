@@ -121,7 +121,7 @@ def get_adjacency_of_type(cell_type: str, data, cutoff=5):
               of synapses from each connected type to the inquiry type; the 
               second column is the number of synapses from the inquiry type to each connected type.
         """
-        assert cell_type in data.types
+        assert cell_type in data.types, f"{cell_type} not in data.types"
         ind = data.type_hash[cell_type]
 
         num_synapses_bt_cell_types = (data.onehot_types.T @ data.J @ data.onehot_types)
@@ -383,9 +383,9 @@ def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
         projection_mats.append(curr_best_proj)
         total_perms.append(total_perm)
     
-    return (projected_embs_across_seeds[np.argmin(scores)],
-            projection_mats[np.argmin(scores)],
-            total_perms[np.argmin(scores)])
+    return (projected_embs_across_seeds[np.argmax(scores)],
+            projection_mats[np.argmax(scores)],
+            total_perms[np.argmax(scores)])
 
 
 def circ_score_via_norm(embeddings_2d, skip_alignment=False):
@@ -415,9 +415,11 @@ def circ_score_via_norm(embeddings_2d, skip_alignment=False):
     unit_circle = make_circle(N)
 
     if skip_alignment:
-        return torch.norm(unit_circle - embeddings_2d) / torch.norm(unit_circle)
+        centered_embeddings = embeddings_2d - embeddings_2d.mean(0)
+        return 1 - torch.norm(unit_circle - embeddings_2d)**2 / torch.norm(centered_embeddings)**2
 
     else:
+        raise NotImplementedError("This part of the code is deprecated.")
         embeddings0, _, _ = solve_shadowmatic2(
             embeddings_2d, nseeds_to_try=10, max_iter=5)
 
