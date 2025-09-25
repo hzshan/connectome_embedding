@@ -8,6 +8,24 @@ import data_utils, torch, utils, models, data_utils
 from matplotlib.colors import LogNorm
 
 
+def set_rc_params():
+    plt.rcParams['lines.linewidth'] = 0.25
+    plt.rcParams['axes.linewidth'] = 0.25
+    plt.rcParams['xtick.major.width'] = 0.25
+    plt.rcParams['ytick.major.width'] = 0.25
+    plt.rcParams['xtick.minor.width'] = 0.25
+    plt.rcParams['ytick.minor.width'] = 0.25
+    plt.rcParams['grid.linewidth'] = 0.25
+    plt.rcParams['font.size'] = 8
+    plt.rcParams['xtick.labelsize'] = 5
+    plt.rcParams['ytick.labelsize'] = 5
+    plt.rcParams['axes.labelsize'] = 8
+    plt.rcParams['legend.fontsize'] = 8
+    # set font to arial
+    plt.rcParams['font.family'] = 'Arial'
+
+
+
 def plot_J_some_types(J: torch.Tensor,
                       types: list,
                       data:data_utils.ConnectivityData,
@@ -83,6 +101,7 @@ def stacked_bar_plot(labels: list,
 def summarize_adjacency_for_type(inquiry_type: str,
                                  data:data_utils.ConnectivityData,
                                  cutoff=0,
+                                 log_scale=False,
                                  ax=None):
     """
     For cells of the given type, plot the number of synapses in and out of each other type.
@@ -100,9 +119,13 @@ def summarize_adjacency_for_type(inquiry_type: str,
         inquiry_type, data, cutoff=cutoff)
 
     if ax is None:
-        plt.figure(figsize=(5, 2), dpi=200)
+        ax = plt.gca()
     else:
         plt.sca(ax)
+    # print('connected types:', connected_types)
+    # print('in_out_counts:', in_out_counts)
+    if log_scale:
+        in_out_counts = np.log(1 + in_out_counts)
     stacked_bar_plot(connected_types, in_out_counts, colors=None, legends=['in', 'out'])
     plt.ylabel('synapses per neuron')
     plt.title('adjacency summary for ' + inquiry_type)
