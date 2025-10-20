@@ -110,7 +110,7 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     unique_types, counts = np.unique(types, return_counts=True)
     inds_to_keep = []
     for _type, _count in zip(unique_types, counts):
-        if _count > min_num_per_type:
+        if _count >= min_num_per_type:
             inds_to_keep += list(np.where(np.array(neuronsall.type).astype(str) == _type)[0])
 
     return Jall[inds_to_keep][:, inds_to_keep], neuronsall.take(inds_to_keep)
@@ -140,8 +140,9 @@ def prep_connectivity_data(full_J_mat,
 
     Returns:
     """
-    
-    allcx = get_inds_by_type(all_neurons, 'type', np.unique(types_wanted))
+    if types_wanted is not None:
+        types_wanted = np.unique(types_wanted)
+    allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
 
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
     N = J.shape[0]
@@ -182,6 +183,7 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
     if types_wanted is None:
         print('No types specified. Grabbing all types.')
         types_wanted = list(neuronall[type_key].unique())
+        types_wanted = [str(t) + '=' for t in types_wanted if type(t) == str]
 
     def _sortsubtype(t, list_of_types):
         """
