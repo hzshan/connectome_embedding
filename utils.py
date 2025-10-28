@@ -332,9 +332,9 @@ def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
         best_perm: the permutation matrix used on the embeddings; best_perm.T @ projected_embeddings recovers the original ordering
     """
     projected_embs_across_seeds = []
-    scores = []
-    projection_mats = []
-    total_perms = []
+    scores_across_seeds = []
+    projection_mats_across_seeds = []
+    total_perms_across_seeds = []
 
     N, D = embeddings.shape
 
@@ -379,13 +379,13 @@ def solve_shadowmatic2(embeddings, nseeds_to_try: int, max_iter=50):
         projected_embs0 *= torch.norm(circle) / torch.norm(projected_embs0)
 
         projected_embs_across_seeds.append(projected_embs0)
-        scores.append(circ_score_via_norm(projected_embs0, skip_alignment=True))
-        projection_mats.append(curr_best_proj)
-        total_perms.append(total_perm)
-    
-    return (projected_embs_across_seeds[np.argmax(scores)],
-            projection_mats[np.argmax(scores)],
-            total_perms[np.argmax(scores)])
+        scores_across_seeds.append(circ_score_via_norm(projected_embs0, skip_alignment=True))
+        projection_mats_across_seeds.append(curr_best_proj)
+        total_perms_across_seeds.append(total_perm)
+
+    return (projected_embs_across_seeds[np.argmax(scores_across_seeds)],
+            projection_mats_across_seeds[np.argmax(scores_across_seeds)],
+            total_perms_across_seeds[np.argmax(scores_across_seeds)])
 
 
 def circ_score_via_norm(embeddings_2d, skip_alignment=False):
