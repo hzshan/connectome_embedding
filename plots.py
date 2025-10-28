@@ -4,7 +4,7 @@ Helpful plots to make.
 
 import numpy as np
 import matplotlib.pyplot as plt
-import data_utils, torch, utils, models, data_utils
+import data_utils, torch, utils, models, data_utils, sklearn.decomposition
 from matplotlib.colors import LogNorm
 
 
@@ -24,6 +24,33 @@ def set_rc_params():
     # set font to arial
     plt.rcParams['font.family'] = 'Arial'
 
+
+
+def plot_embeddings_3d(types: list, data, model, scatter_kwargs={}, ax=None):
+
+    embs = []
+    for t in types:
+        embs.append(model.embeddings[data.neuron_hash[t]].detach().numpy())
+    embs = np.concatenate(embs)
+    pca = sklearn.decomposition.PCA(n_components=3).fit(embs)
+
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+    
+    max_range = 0
+    for t in types:
+        _embs = model.embeddings[data.neuron_hash[t]].detach().numpy()
+        _embs = pca.transform(_embs)
+        ax.scatter(_embs[:, 0], _embs[:, 1], _embs[:, 2], **scatter_kwargs, label=t)
+        if np.max(np.abs(_embs)) > max_range:
+            max_range = np.max(np.abs(_embs))  # add some padding
+    
+    ax.set_xlim(-max_range, max_range)
+    ax.set_ylim(-max_range, max_range)
+    ax.set_zlim(-max_range, max_range)
+    ax.set_box_aspect([1, 1, 1])
+    return ax
 
 
 def plot_J_some_types(J: torch.Tensor,
@@ -125,9 +152,9 @@ def summarize_adjacency_for_type(inquiry_type: str,
     # print('connected types:', connected_types)
     # print('in_out_counts:', in_out_counts)
     if log_scale:
-        in_out_counts = np.log(1 + in_out_counts)
+        in_out_counts = np.log10(1 + in_out_counts)
     stacked_bar_plot(connected_types, in_out_counts, colors=None, legends=['in', 'out'])
-    plt.ylabel('synapses per neuron')
+    plt.ylabel('synapses per neuron' + (' (log10 scale)' if log_scale else ''))
     plt.title('adjacency summary for ' + inquiry_type)
     plt.tight_layout()
 
@@ -231,28 +258,41 @@ def plot_embeddings_in_2d(types, data, model, ax=None, center_embs=False, scatte
     plt.gca().set_aspect('equal', adjustable='box')
 
 
-def plot_J_between_types(J, data, typeA:str, typeB:str, log_J=False):
+def plot_J_between_types(J, data, typeA:str, typeB:str, log_J=False, combine=False):
     """
     Plot the connectivity matrix between two types of neurons.
     """
     A2B = J[data.neuron_hash[typeA]][:, data.neuron_hash[typeB]]
     B2A = J[data.neuron_hash[typeB]][:, data.neuron_hash[typeA]]
 
-    if log_J:
-        A2B = np.log(1 + A2B)
-        B2A = np.log(1 + B2A)
+    def imshow(x):
+        plt.imshow(x, cmap='gray_r', aspect='auto', interpolation='none')
 
-    _, axes = plt.subplots(1, 2, figsize=(10, 5))
-    plt.sca(axes[0])
-    plt.imshow(np.log(1 + A2B), cmap='gray_r')
-    plt.title(f'{typeA} to {typeB}')
-    plt.xlabel(f'{typeB} neuron idx')
-    plt.ylabel(f'{typeA} neuron idx')
-    plt.colorbar()
-    plt.sca(axes[1])
-    plt.imshow(np.log(1 + B2A), cmap='gray_r')
-    plt.title(f'{typeB} to {typeA}')
-    plt.xlabel(f'{typeA} neuron idx')
-    plt.ylabel(f'{typeB} neuron idx')
-    plt.colorbar()
+    if combine and log_J:
+        plt.figure()
+        imshow(np.log(1 + A2B + B2A.T))
+        plt.xlabel(f'{typeB} neuron idx')
+        plt.ylabel(f'{typeA} neuron idx')
+        plt.colorbar()
+    elif combine and not log_J:
+        plt.figure()
+        imshow(A2B + B2A.T)
+        plt.xlabel(f'{typeB} neuron idx')
+        plt.ylabel(f'{typeA} neuron idx')
+        plt.colorbar()
+    else:
+        _, axes = plt.subplots(1, 2, figsize=(4, 2))
+        plt.sca(axes[0])
+        imshow(np.log(1 + A2B)) if log_J else imshow(A2B)
+        plt.title(f'{typeA} to {typeB}')
+        plt.xlabel(f'{typeB} neuron idx')
+        plt.ylabel(f'{typeA} neuron idx')
+        plt.colorbar(label='log(1 + # synapses)' if log_J else '# synapses')
+        plt.sca(axes[1])
+        imshow(np.log(1 + B2A.T)) if log_J else imshow(B2A.T)
+        plt.title(f'{typeB} to {typeA}')
+        plt.xlabel(f'{typeB} neuron idx')
+        plt.ylabel(f'{typeA} neuron idx')
+        plt.colorbar(label='log(1 + # synapses)' if log_J else '# synapses')
+        plt.tight_layout()
     return A2B, B2A
