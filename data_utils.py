@@ -61,7 +61,10 @@ class ConnectivityData:
             N_per_type: list of int, the number of neurons of each type
             neurons: pandas DataFrame, the information about each neuron
         """
-        self.J = torch.tensor(J)
+        if type(J) != torch.Tensor:
+            self.J = torch.tensor(J)
+        else:
+            self.J = J
         self.N = J.shape[0]
 
         onehot_types, Ntype, typehash, uniqtypes, neuron_hash = \
@@ -95,6 +98,16 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     neuronsall.sort_values(by=['instance'], ignore_index=True, inplace=True)
     conns = pd.read_csv(datapath + "traced-total-connections.csv")
 
+    # only keep neurons with at least min_num_per_type neurons of the same type
+    types = np.array(neuronsall.type).astype(str)
+    unique_types, counts = np.unique(types, return_counts=True)
+    inds_to_keep = []
+    for _type, _count in zip(unique_types, counts):
+        if _count >= min_num_per_type:
+            inds_to_keep += list(np.where(np.array(neuronsall.type).astype(str) == _type)[0])
+
+    neuronsall = neuronsall.take(inds_to_keep)
+
     # store a large matrix of all connections
     Nall = len(neuronsall)
     Jall = np.zeros([Nall,Nall], dtype=np.uint)
@@ -105,15 +118,8 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
 
     Jall[postinds, preinds] = conns.weight
 
-    # only keep neurons with at least min_num_per_type neurons of the same type
-    types = np.array(neuronsall.type).astype(str)
-    unique_types, counts = np.unique(types, return_counts=True)
-    inds_to_keep = []
-    for _type, _count in zip(unique_types, counts):
-        if _count >= min_num_per_type:
-            inds_to_keep += list(np.where(np.array(neuronsall.type).astype(str) == _type)[0])
 
-    return Jall[inds_to_keep][:, inds_to_keep], neuronsall.take(inds_to_keep)
+    return Jall, neuronsall
 
 
 def prep_connectivity_data(full_J_mat,
@@ -147,7 +153,7 @@ def prep_connectivity_data(full_J_mat,
     J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
     N = J.shape[0]
     neurons = all_neurons.iloc[allcx, :]
-    neurons.reset_index(inplace=True)
+    neurons.reset_index(inplace=True, drop=True)
 
     if split_LR is None:
         print('Will attempt to split all types into left and right.')
@@ -214,7 +220,7 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
             continue
         output.append(_sortsubtype(t, list_of_types))
 
-    return np.concatenate(output)
+    return np.unique(np.concatenate(output))
 
 
 def get_Jall_neuronall_flywire(datapath = ""):
