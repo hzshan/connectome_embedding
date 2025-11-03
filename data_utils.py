@@ -122,6 +122,63 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
     return Jall, neuronsall
 
 
+def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
+    """
+    Load the J matrix and neuron information from the feather files in the given
+    directory.
+    Only keep neurons of types with at least min_num_per_type neurons.
+    Due to the large size of the full connectome, only neurons of types
+    specified in `types` are kept.
+
+    Returns:
+    Jall: the connectivity matrix (element i,j is the number of synapses from
+    neuron j to neuron i)
+    neuronsall: a pandas dataframe with information about each neuron
+    """
+    # load information about traced neurons and traced connections
+    neuronsall = pd.read_feather(
+        datapath + "body-annotations-male-cns-v0.9-minconf-0.5.feather")
+    
+    # only keep traced neurons
+    neuronsall = neuronsall[neuronsall.status == "Traced"]
+
+    inds = get_inds_by_type(neuronsall, type_key='type', types_wanted=types)
+    selected_neurons = neuronsall.iloc[inds].copy()
+    # selected_neurons = neuronsall[neuronsall.type.isin(types)]
+
+
+    # only keep neurons with at least min_num_per_type neurons of the same type
+    types = np.array(selected_neurons.type).astype(str)
+    unique_types, counts = np.unique(types, return_counts=True)
+    inds_to_keep = []
+    for _type, _count in zip(unique_types, counts):
+        if _count >= min_num_per_type:
+            inds_to_keep += list(np.where(
+                np.array(selected_neurons.type).astype(str) == _type)[0])
+
+    selected_neurons = selected_neurons.take(inds_to_keep)
+    selected_neurons.sort_values(by=['instance'], ignore_index=True, inplace=True)
+
+    conns = pd.read_feather(datapath + ""
+    "connectome-weights-male-cns-v0.9-minconf-0.5.feather")
+
+    # for the connections, remove ones with pre or post neurons not in neuronsall
+    valid_bodyIds = set(selected_neurons.bodyId)
+    conns = conns[conns.body_pre.isin(valid_bodyIds) &
+                  conns.body_post.isin(valid_bodyIds)]
+    
+    print(f'Processed {len(selected_neurons)} neurons and {len(conns)} connections.')
+
+    idhash = dict(zip(selected_neurons.bodyId,np.arange(len(selected_neurons))))
+
+
+    selected_J = np.zeros((len(selected_neurons), len(selected_neurons)), dtype=np.float32)
+    selected_J[list(conns.body_post.apply(lambda x: idhash[x])),
+         list(conns.body_pre.apply(lambda x: idhash[x]))] = conns.weight
+
+    return selected_J, selected_neurons
+
+
 def prep_connectivity_data(full_J_mat,
                            all_neurons: pd.DataFrame,
                            types_wanted=[],
@@ -190,6 +247,15 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
         print('No types specified. Grabbing all types.')
         types_wanted = list(neuronall[type_key].unique())
         types_wanted = [str(t) + '=' for t in types_wanted if type(t) == str]
+    
+    contains = [t for t in types_wanted if t[-1] not in ['=', '*']]
+    exact = [t[:-1] for t in types_wanted if t[-1] == '=']
+    startswith = [t[:-1] for t in types_wanted if t[-1] == '*']
+
+    print('Getting indices for types containing:', contains)
+    print('Getting indices for types starting with:', startswith)
+    print('Getting indices for types exactly matching:', exact)
+
 
     def _sortsubtype(t, list_of_types):
         """
@@ -199,7 +265,7 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
         if the string ends with '*", then only neurons of a type starting with that
         string are included.
         """
-
+        
         if t[-1] == '=':
             t = t[:-1]
             inds = np.nonzero([t == x for x in list_of_types])[0]
