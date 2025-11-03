@@ -167,7 +167,7 @@ def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
     conns = conns[conns.body_pre.isin(valid_bodyIds) &
                   conns.body_post.isin(valid_bodyIds)]
     
-    print(f'Processed {len(selected_neurons)} neurons and {len(conns)} connections.')
+    print(f'Processed {len(selected_neurons)} neurons and {len(conns)} synapses.')
 
     idhash = dict(zip(selected_neurons.bodyId,np.arange(len(selected_neurons))))
 
