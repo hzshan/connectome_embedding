@@ -21,8 +21,12 @@ def set_rc_params():
     plt.rcParams['ytick.labelsize'] = 5
     plt.rcParams['axes.labelsize'] = 8
     plt.rcParams['legend.fontsize'] = 8
+    plt.rcParams['figure.dpi'] = 150
     # set font to arial
     plt.rcParams['font.family'] = 'Arial'
+
+    # set svg font type to none (so text is editable in Illustrator)
+    plt.rcParams['svg.fonttype'] = 'none'
 
 
 
@@ -82,8 +86,8 @@ def plot_J_some_types(J: torch.Tensor,
     J_submatrix = J[all_neuron_inds][:, all_neuron_inds]
 
     plt.imshow(np.log(1 + J_submatrix), cmap='gray_r', interpolation='none', vmax=vmax)
-    plt.xticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
-    plt.yticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
+    # plt.xticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
+    # plt.yticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
 
     return J_submatrix
 
@@ -119,6 +123,7 @@ def stacked_bar_plot(labels: list,
         left += bar_heights[:, i]
 
     # rotate xlabels
+    ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=6)
     plt.legend()
     
@@ -146,7 +151,7 @@ def summarize_adjacency_for_type(inquiry_type: str,
         inquiry_type, data, cutoff=cutoff)
 
     if ax is None:
-        ax = plt.gca()
+        ax = plt.figure().gca()
     else:
         plt.sca(ax)
     # print('connected types:', connected_types)
@@ -155,7 +160,7 @@ def summarize_adjacency_for_type(inquiry_type: str,
         in_out_counts = np.log10(1 + in_out_counts)
     stacked_bar_plot(connected_types, in_out_counts, colors=None, legends=['in', 'out'])
     plt.ylabel('synapses per neuron' + (' (log10 scale)' if log_scale else ''))
-    plt.title('adjacency summary for ' + inquiry_type)
+    plt.title(f'adjacency summary for {inquiry_type} (cutoff={cutoff})')
     plt.tight_layout()
 
     return connected_types, in_out_counts
