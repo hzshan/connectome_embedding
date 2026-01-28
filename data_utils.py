@@ -131,7 +131,7 @@ def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
     specified in `types` are kept.
 
     Returns:
-    Jall: the connectivity matrix (element i,j is the number of synapses from
+    Jall: the connectivity matrix (element i, j is the number of synapses from
     neuron j to neuron i)
     neuronsall: a pandas dataframe with information about each neuron
     """
@@ -173,8 +173,8 @@ def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
 
 
     selected_J = np.zeros((len(selected_neurons), len(selected_neurons)), dtype=np.float32)
-    selected_J[list(conns.body_pre.apply(lambda x: idhash[x])),
-         list(conns.body_post.apply(lambda x: idhash[x]))] = conns.weight
+    selected_J[list(conns.body_post.apply(lambda x: idhash[x])),
+         list(conns.body_pre.apply(lambda x: idhash[x]))] = conns.weight
 
     return selected_J, selected_neurons
 

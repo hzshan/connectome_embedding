@@ -77,6 +77,7 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
         projected_all_embeddings = embeddings @ V
     else:
         ref_embeddings = embeddings[data.neuron_hash[reference_type]]
+        ref_embeddings -= ref_embeddings.mean(0)
         _, proj, _  = solve_shadowmatic2(
             ref_embeddings, nseeds_to_try=50, max_iter=10
         )
@@ -107,14 +108,15 @@ def get_adjacency_of_type(cell_type: str, data, cutoff=5):
         """
         For the given cell type, find its most connected cell types in the data.
 
-        The "synapses per neuron" number for type A cells to type B cells is
-        defined as the total number of synapses from A cells to B cells, 
-        divided by the number of A cells. Same for B to A.
+        For the summary of type A, the "synapses per neuron" from A to B is the
+        total number of synapses from A cells to B cells, divided by the number
+        of A cells. The number of synapses from B to A is defined similarly (
+        also divided by the number of A cells).
 
         Args:
             cell_type: the type of cells to summarize the connectivity for
             data: the ConnectivityData object
-            cutoff: only types with more than this number of synapses per neuron are shown
+            cutoff: only types with more than this number of synapses (either direction) per neuron are shown
         Returns:
             labels: the labels of the connected types
             in_out_counts: N_connected_types x 2. The first column is the number
