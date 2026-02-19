@@ -4,8 +4,13 @@ Notations:
 N - number of neurons
 Ntype - number of neuron types
 
+Connectivity matrices have the following convention
+W[i,j] = number of synapses from neuron j to neuron i
+J[i,j] = number of synapses from neuron i to neuron j
+
+This may be inconsistent with conventions elsewhere.
 Preprocessing workflow:
-1. `get_Jall_neuronall` and `get_Jall_neuronall_flywire` directly work with data
+1. `get_W_all_neuronall` and `get_W_all_neuronall_flywire` directly work with data
 files downloaded from hemibrain and flywire, respectively. 
     At this stage, there is the option to remove types with fewer than a certain
     number of neurons.
@@ -82,14 +87,14 @@ class ConnectivityData:
         assert len(self.types) == self.Ntype
 
 
-def get_Jall_neuronall(datapath = "", min_num_per_type=5):
+def get_W_all_neuronall(datapath = "", min_num_per_type=5):
     """
-    Load the J matrix and neuron information from the csv files in the given
+    Load the W matrix and neuron information from the csv files in the given
     directory.
     Only keep neurons of types with at least min_num_per_type neurons.
 
     Returns:
-    Jall: the connectivity matrix (element i,j is the number of synapses from
+    W_all: the connectivity matrix (element i,j is the number of synapses from
     neuron j to neuron i)
     neuronsall: a pandas dataframe with information about each neuron
     """
@@ -110,30 +115,30 @@ def get_Jall_neuronall(datapath = "", min_num_per_type=5):
 
     # store a large matrix of all connections
     Nall = len(neuronsall)
-    Jall = np.zeros([Nall,Nall], dtype=np.uint)
+    W_all = np.zeros([Nall, Nall], dtype=np.uint)
 
     idhash = dict(zip(neuronsall.bodyId,np.arange(Nall)))
     preinds = [idhash[x] for x in conns.bodyId_pre]
     postinds = [idhash[x] for x in conns.bodyId_post]
 
-    Jall[postinds, preinds] = conns.weight
+    W_all[postinds, preinds] = conns.weight
 
 
-    return Jall, neuronsall
+    return W_all, neuronsall
 
 
-def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
+def get_W_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
     """
-    Load the J matrix and neuron information from the feather files in the given
+    Load the W matrix and neuron information from the feather files in the given
     directory.
     Only keep neurons of types with at least min_num_per_type neurons.
     Due to the large size of the full connectome, only neurons of types
     specified in `types` are kept.
 
     Returns:
-    Jall: the connectivity matrix (element i, j is the number of synapses from
+    W: the connectivity matrix (element i, j is the number of synapses from
     neuron j to neuron i)
-    neuronsall: a pandas dataframe with information about each neuron
+    neurons: a pandas dataframe with information about each neuron
     """
     # load information about traced neurons and traced connections
     neuronsall = pd.read_feather(
@@ -172,14 +177,14 @@ def get_J_neurons_maleCNS(datapath = "", min_num_per_type=5, types=[]):
     idhash = dict(zip(selected_neurons.bodyId,np.arange(len(selected_neurons))))
 
 
-    selected_J = np.zeros((len(selected_neurons), len(selected_neurons)), dtype=np.float32)
-    selected_J[list(conns.body_post.apply(lambda x: idhash[x])),
+    selected_W = np.zeros((len(selected_neurons), len(selected_neurons)), dtype=np.float32)
+    selected_W[list(conns.body_post.apply(lambda x: idhash[x])),
          list(conns.body_pre.apply(lambda x: idhash[x]))] = conns.weight
 
-    return selected_J, selected_neurons
+    return selected_W, selected_neurons
 
 
-def prep_connectivity_data(full_J_mat,
+def prep_connectivity_data(W_mat,
                            all_neurons: pd.DataFrame,
                            types_wanted=[],
                            split_LR=None):
@@ -189,11 +194,11 @@ def prep_connectivity_data(full_J_mat,
     into left and right based on the instance name (in hemibrain data, some
     neurons have type names such as 'EPG_L' and 'EPG_R').
 
-    Important: the returned J matrix is transposed, so that J[i,j] is the number
+    Important: returns connectivity such that J[i,j] is the number
     of synapses from neuron i to neuron j.
 
     Args:
-    full_J_mat: NxN numpy array, the full connectivity matrix. Element i,j is
+    W_mat: NxN numpy array, the full connectivity matrix. Element i,j is
     the number of synapses from neuron j to neuron i.
     all_neurons: pandas DataFrame, the information about each neuron
     types_wanted: list of str, the list of strings to search for in neuron types
@@ -207,8 +212,10 @@ def prep_connectivity_data(full_J_mat,
         types_wanted = np.unique(types_wanted)
     allcx = get_inds_by_type(all_neurons, 'type', types_wanted)
 
-    J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
-    N = J.shape[0]
+    assert W_mat.shape[0] == all_neurons.shape[0], "W_mat and all_neurons must have the same number of neurons"
+
+    W = W_mat[allcx, :][:, allcx].astype(np.float32)
+    N = W.shape[0]
     neurons = all_neurons.iloc[allcx, :]
     neurons.reset_index(inplace=True, drop=True)
 
@@ -226,12 +233,11 @@ def prep_connectivity_data(full_J_mat,
 
     new_type_sort = np.argsort(neurons.type)
     neurons = neurons.iloc[new_type_sort, :]
-    J = J[new_type_sort, :][:, new_type_sort]
+    W = W[new_type_sort, :][:, new_type_sort]
 
     neurons.reset_index(inplace=True)
 
-    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, 'type')
-
+    J_data = ConnectivityData(torch.tensor(W.T).float(), neurons, 'type')
     return J_data
 
 
@@ -289,7 +295,7 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
     return np.unique(np.concatenate(output))
 
 
-def get_Jall_neuronall_flywire(datapath = ""):
+def get_W_all_neuronall_flywire(datapath = ""):
     neuronsall = pd.read_csv(datapath + "neurons.csv")
     classif = pd.read_csv(datapath + "classification.csv")
     visual_types = pd.read_csv(datapath + "visual_neuron_types.csv")
@@ -304,15 +310,15 @@ def get_Jall_neuronall_flywire(datapath = ""):
     neuronsall['J_idx'] = neuronsall['J_idx_post'] = neuronsall['J_idx_pre'] = neuronsall.root_id.apply(lambda x: idhash[x])
     preinds = [idhash[x] for x in conns.pre_root_id]
     postinds = [idhash[x] for x in conns.post_root_id]
-    # Jall = np.zeros([Nall, Nall], dtype=np.uint)
-    # Jall[postinds, preinds] = conns.syn_count
-    Jall = csr_matrix((conns.syn_count, (postinds, preinds)), shape=(Nall, Nall), dtype="int16")
+    # W_all = np.zeros([Nall, Nall], dtype=np.uint)
+    # W_all[postinds, preinds] = conns.syn_count
+    W_all = csr_matrix((conns.syn_count, (postinds, preinds)), shape=(Nall, Nall), dtype="int16")
 
-    return neuronsall, Jall
+    return neuronsall, W_all
 
 
 def prep_connectivity_data_flywire(
-        full_J_mat, all_neurons, types_wanted=[], split_LR=None, type_key='visual_type'):
+        W_mat, all_neurons, types_wanted=[], split_LR=None, type_key='visual_type'):
     """
     Important: the returned J matrix is transposed, so that J[i,j] is the number
     of synapses from neuron i to neuron j.
@@ -320,8 +326,8 @@ def prep_connectivity_data_flywire(
 
     allcx = get_inds_by_type(all_neurons, type_key, types_wanted)
 
-    J = full_J_mat[allcx, :][:, allcx].astype(np.float32)
-    N = J.shape[0]
+    W = W_mat[allcx, :][:, allcx].astype(np.float32)
+    N = W.shape[0]
     neurons = all_neurons.iloc[allcx, :]
     neurons.reset_index(inplace=True)
 
@@ -341,9 +347,9 @@ def prep_connectivity_data_flywire(
 
     new_type_sort = np.argsort(neurons[type_key])
     neurons = neurons.iloc[new_type_sort, :]
-    J = J[new_type_sort, :][:, new_type_sort]
+    W = W[new_type_sort, :][:, new_type_sort]
 
-    J_data = ConnectivityData(torch.tensor(J.T).float(), neurons, type_key)
+    J_data = ConnectivityData(torch.tensor(W.T).float(), neurons, type_key)
 
 
     return J_data
