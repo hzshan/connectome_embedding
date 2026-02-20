@@ -255,7 +255,7 @@ class InteractionModel(Model):
 
 def train_model(model, target_mat,
                 loss_type='poisson', lr=0.01, steps=40000,
-                print_every=2000, reg_fn=None, train_inds=None, test_inds=None):
+                print_every=2000, reg_fn=None, train_mask=None, test_mask=None):
     """
     Train an embedding model to fit the connectivity matrix.
 
@@ -264,12 +264,20 @@ def train_model(model, target_mat,
     # only compute loss on off-diagonal elements of J
     _N = target_mat.shape[0]
 
-    if train_inds is None:
+    if train_mask is None:
         train_inds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
+    else:
+        assert train_mask.shape == target_mat.shape
+        assert train_mask.dtype == bool
+        train_inds = np.where(train_mask.flatten())[0]
+    
     y_train = target_mat.flatten()[train_inds]
 
 
-    if test_inds is not None:
+    if test_mask is not None:
+        assert test_mask.shape == target_mat.shape
+        assert test_mask.dtype == bool
+        test_inds = np.where(test_mask.flatten())[0]
         y_test = target_mat.flatten()[test_inds]
     else:
         y_test = None
