@@ -231,9 +231,9 @@ def prep_connectivity_data(W_mat,
             LR_suffix = hemibrain_LR(neuron_name)
             neurons.loc[i, 'type'] += LR_suffix
 
-    new_type_sort = np.argsort(neurons.type)
-    neurons = neurons.iloc[new_type_sort, :]
-    W = W[new_type_sort, :][:, new_type_sort]
+    # new_type_sort = np.argsort(neurons.type)
+    neurons.sort_values(by=['type', 'bodyId'], inplace=True)
+    W = W[neurons.index, :][:, neurons.index]
 
     neurons.reset_index(inplace=True)
 
