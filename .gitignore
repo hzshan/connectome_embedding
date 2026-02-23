@@ -1,4 +1,5 @@
 *.csv
+*.xlsx
 *.ipynb
 *.npz
 *.png
@@ -11,3 +12,4 @@ Figures/
 Archive/
 Connectivity_data_from_manuel/
 .DS_Store
+data_maleCNS/
