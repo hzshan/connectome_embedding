@@ -4,8 +4,13 @@ Helpful plots to make.
 
 import numpy as np
 import matplotlib.pyplot as plt
-import data_utils, torch, utils, models, data_utils, sklearn.decomposition
+import torch
+import sklearn.decomposition
 from matplotlib.colors import LogNorm
+
+from . import data_utils
+from . import models
+from . import utils
 
 
 def set_rc_params():
@@ -200,7 +205,7 @@ def plot_J(J, data: utils.ConnectivityData,
            tick_fontsize=5,
            vmax=None, dont_log=False):
     if ax is None:
-        ax = plt.gca()
+        ax = plt.figure().gca()
 
     plt.sca(ax)
 

@@ -9,7 +9,9 @@ optic lobe, and builds the connectivity matrix accordingly.
 """
 import numpy as np
 import matplotlib.pyplot as plt
-import pickle, data_utils, tqdm
+import pickle, tqdm
+
+from connectome_embedding import data_utils
 
 types_wanted = ['LC*', 'MC*', 'LPLC*']
 raw_data_path = 'data_hemibrain/hemibrain_data_min_10_cells_per_type.pkl'
@@ -18,11 +20,11 @@ destination_for_matrix_without_optic_lobe_synapses = 'data_hemibrain/J_visual_ne
 
 #########################
 
-neuronsall, Jall = pickle.load(open(raw_data_path, 'rb'))
+neuronsall, W_all = pickle.load(open(raw_data_path, 'rb'))
 
 # Pick out only neurons of certain types for further analysis.
 data = data_utils.prep_connectivity_data(
-    Jall, neuronsall, types_wanted, split_LR=[])
+    W_all, neuronsall, types_wanted, split_LR=[])
 
 # path where the hashmaps are stored
 PATH = 'data_hemibrain/visual neuron morphology/'

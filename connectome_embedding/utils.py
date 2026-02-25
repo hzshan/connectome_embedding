@@ -1,7 +1,11 @@
 import numpy as np
 import torch
-import scipy, data_utils, pandas, tqdm, data_utils
-from data_utils import ConnectivityData
+import scipy
+import pandas
+import tqdm
+
+from . import data_utils
+from .data_utils import ConnectivityData
 
 
 def make_rotation_mats(rotation_params):
