@@ -37,11 +37,12 @@ class Model:
         self.params = [self.embeddings, self.A, self.B, self.C]
 
         assert wrapper_fn in ['exp', 'softplus']
+        self.wrapper_fn_choice = wrapper_fn
 
 
     def wrapper_fn(self, x):
         """A nonlinear function to keep the predicted synaptic number positive."""
-        if self.wrapper_fn == 'exp':
+        if self.wrapper_fn_choice == 'exp':
             return torch.exp(x)
         else:
             return torch.nn.functional.softplus(x)
@@ -247,6 +248,7 @@ class InteractionModel(Model):
             dist_sq = self.get_dist_mat_with_transforms()
         else:
             dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
+            # dist_sq = -self.embeddings @ self.embeddings.T
 
         content = scaling * torch.exp(-dist_sq / covar) + bias
         # content = -dist * scaling + bias
@@ -296,6 +298,10 @@ def train_model(model, target_mat,
 
         flat_preds = model.pred_synapses().flatten()
 
+        # check inf
+        if torch.isinf(flat_preds[train_inds]).any():
+            raise ValueError('preds are inf')
+
         if loss_type == 'poisson':
             loss = poisson_loss(flat_preds[train_inds], y_train)
         else:
@@ -317,7 +323,7 @@ def train_model(model, target_mat,
         tot_loss.backward()
 
         if torch.isnan(tot_loss):
-            raise ValueError('loss is nan')
+            raise ValueError('loss is nan', flat_preds)
         optim.step()
 
         losses[i] = loss.detach().numpy()
