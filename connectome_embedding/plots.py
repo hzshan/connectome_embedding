@@ -35,13 +35,13 @@ def set_rc_params():
 
 
 
-def plot_embeddings_3d(types: list, data, model, scatter_kwargs={}, ax=None):
+def plot_embeddings_3d(types: list, data, model, scatter_kwargs={}, ax=None, dims_to_plot=None):
 
     embs = []
     for t in types:
         embs.append(model.embeddings[data.neuron_hash[t]].detach().numpy())
     embs = np.concatenate(embs)
-    pca = sklearn.decomposition.PCA(n_components=3).fit(embs)
+    pca = sklearn.decomposition.PCA(n_components=embs.shape[1]).fit(embs)
 
     if ax is None:
         fig = plt.figure()
@@ -51,6 +51,8 @@ def plot_embeddings_3d(types: list, data, model, scatter_kwargs={}, ax=None):
     for t in types:
         _embs = model.embeddings[data.neuron_hash[t]].detach().numpy()
         _embs = pca.transform(_embs)
+        if dims_to_plot is not None:
+            _embs = _embs[:, dims_to_plot]
         ax.scatter(_embs[:, 0], _embs[:, 1], _embs[:, 2], **scatter_kwargs, label=t)
         if np.max(np.abs(_embs)) > max_range:
             max_range = np.max(np.abs(_embs))  # add some padding
