@@ -155,7 +155,7 @@ class InteractionModel(Model):
     """
     Model with a rotation matrix for each pair of cell types.
     """
-    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp'):
+    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp', kernel='distance'):
         super().__init__(N, Ntype, D, onehot_types,
                          wrapper_fn=wrapper_fn)
 
@@ -173,6 +173,10 @@ class InteractionModel(Model):
                         self.translation_vecs]
         
         self.use_transforms = True  # if False, use the original embeddings
+
+        assert kernel in ['distance', 'dot_product']
+        self.kernel_type = kernel
+        
 
 
     def get_target_embs_for_plots(self, ctype_onehots, source_type):
@@ -245,10 +249,17 @@ class InteractionModel(Model):
         # cross_term = source_emb @ target_emb.T
         # dist = emb_sum + target_sum.T - 2 * cross_term
         if self.use_transforms:
+            if self.kernel_type == 'dot_product':
+                raise NotImplementedError(
+                    "dot_product kernel is not implemented when use_transforms=True"
+                )
             dist_sq = self.get_dist_mat_with_transforms()
         else:
-            dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
-            # dist_sq = -self.embeddings @ self.embeddings.T
+            if self.kernel_type == 'distance':
+                dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
+            else:
+                assert self.kernel_type == 'dot_product'
+                dist_sq = -self.embeddings @ self.embeddings.T
 
         content = scaling * torch.exp(-dist_sq / covar) + bias
         # content = -dist * scaling + bias
@@ -301,6 +312,8 @@ def train_model(model, target_mat,
         # check inf
         if torch.isinf(flat_preds[train_inds]).any():
             raise ValueError('preds are inf')
+        if torch.isnan(flat_preds[train_inds]).any():
+            raise ValueError('preds are nan')
 
         if loss_type == 'poisson':
             loss = poisson_loss(flat_preds[train_inds], y_train)
@@ -311,7 +324,7 @@ def train_model(model, target_mat,
             # torch.binary_cross_entropy_with_logits(
             #     , reduction=1)
             # loss = torch.norm(flat_preds[train_inds] - y_train)**2
-            loss = torch.sum((flat_preds[train_inds] - y_train)**2 / (1 + flat_preds[train_inds])**2)
+            loss = torch.mean((flat_preds[train_inds] - y_train)**2 / (1 + (y_train)**2))
             # loss = torch.sum((torch.log(flat_preds[train_inds] + 1e-1) - torch.log(y_train + 1e-1))**2)
 
 
@@ -323,8 +336,21 @@ def train_model(model, target_mat,
         tot_loss.backward()
 
         if torch.isnan(tot_loss):
-            raise ValueError('loss is nan', flat_preds)
+            raise ValueError('loss is nan')
+    
+        for p in model.params:
+            if p.grad is not None:
+                if torch.isnan(p.grad).any():
+                    print(loss, tot_loss, torch.isnan(flat_preds[train_inds]).any())
+                    raise ValueError('param grad {} is nan'.format(p.grad))
+                if torch.isinf(p.grad).any():
+                    raise ValueError('param grad {} is inf'.format(p.grad))
         optim.step()
+        for p in model.params:
+            if torch.isnan(p).any():
+                raise ValueError('param {} is nan'.format(p))
+            if torch.isinf(p).any():
+                raise ValueError('param {} is inf'.format(p))
 
         losses[i] = loss.detach().numpy()
         embedding_norms[i] = torch.norm(model.embeddings).detach().numpy()
@@ -332,8 +358,8 @@ def train_model(model, target_mat,
         # if model.rotation_params is not None:
         #     rotation_norms[i] = torch.norm(model.rotation_params).detach().numpy()
 
-        if loss_type == 'mse':
-            losses[i] /= (torch.norm(y_train)**2).numpy()
+        # if loss_type == 'mse':
+        #     losses[i] /= (torch.norm(y_train)**2).numpy()
 
         if (i+1) % print_every == 0:
             print(i, f'normalized loss: {losses[i]:.4f}',
