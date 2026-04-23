@@ -155,7 +155,7 @@ class InteractionModel(Model):
     """
     Model with a rotation matrix for each pair of cell types.
     """
-    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp', kernel='distance'):
+    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp', kernel='distance', nonlinear_fn='exp'):
         super().__init__(N, Ntype, D, onehot_types,
                          wrapper_fn=wrapper_fn)
 
@@ -176,6 +176,7 @@ class InteractionModel(Model):
 
         assert kernel in ['distance', 'dot_product']
         self.kernel_type = kernel
+        self.nonlinear_fn = nonlinear_fn
         
 
 
@@ -261,8 +262,17 @@ class InteractionModel(Model):
                 assert self.kernel_type == 'dot_product'
                 dist_sq = -self.embeddings @ self.embeddings.T
 
-        content = scaling * torch.exp(-dist_sq / covar) + bias
-        # content = -dist * scaling + bias
+        nonlinear_fn = None
+        if self.nonlinear_fn == 'exp':
+            nonlinear_fn = lambda x: torch.exp(x)
+        elif self.nonlinear_fn == 'cubic':
+            nonlinear_fn = lambda x: x**3
+        elif self.nonlinear_fn == 'linear':
+            nonlinear_fn = lambda x: x
+        else:
+            raise ValueError(f'unknown nonlinear_fn {self.nonlinear_fn}')
+
+        content = scaling * nonlinear_fn(-dist_sq / covar) + bias
 
         return self.wrapper_fn(content)
 
@@ -363,7 +373,7 @@ def train_model(model, target_mat,
 
         if (i+1) % print_every == 0:
             print(i, f'normalized loss: {losses[i]:.4f}',
-                f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**2 / _N:.2f}')
+                f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**3 / _N:.2f}')
             if y_test is not None:
                 test_loss = poisson_loss(flat_preds[test_inds], y_test)
                 print(f'test loss: {test_loss:.4f}')
