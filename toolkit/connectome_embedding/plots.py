@@ -13,20 +13,35 @@ from . import models
 from . import utils
 
 
-def set_rc_params():
-    plt.rcParams['lines.linewidth'] = 0.25
-    plt.rcParams['axes.linewidth'] = 0.25
-    plt.rcParams['xtick.major.width'] = 0.25
-    plt.rcParams['ytick.major.width'] = 0.25
-    plt.rcParams['xtick.minor.width'] = 0.25
-    plt.rcParams['ytick.minor.width'] = 0.25
-    plt.rcParams['grid.linewidth'] = 0.25
-    plt.rcParams['font.size'] = 8
-    plt.rcParams['xtick.labelsize'] = 5
-    plt.rcParams['ytick.labelsize'] = 5
-    plt.rcParams['axes.labelsize'] = 8
-    plt.rcParams['legend.fontsize'] = 8
-    plt.rcParams['figure.dpi'] = 150
+def set_rc_params(for_slides=False):
+    if for_slides:
+        plt.rcParams['lines.linewidth'] = 2
+        plt.rcParams['axes.linewidth'] = 2
+        plt.rcParams['xtick.major.width'] = 2
+        plt.rcParams['ytick.major.width'] = 2
+        plt.rcParams['xtick.minor.width'] = 2
+        plt.rcParams['ytick.minor.width'] = 2
+        plt.rcParams['grid.linewidth'] = 2
+        plt.rcParams['font.size'] = 24
+        plt.rcParams['xtick.labelsize'] = 24
+        plt.rcParams['ytick.labelsize'] = 24
+        plt.rcParams['axes.labelsize'] = 24
+        plt.rcParams['legend.fontsize'] = 24
+        plt.rcParams['figure.dpi'] = 150
+    else:
+        plt.rcParams['lines.linewidth'] = 0.25
+        plt.rcParams['axes.linewidth'] = 0.25
+        plt.rcParams['xtick.major.width'] = 0.25
+        plt.rcParams['ytick.major.width'] = 0.25
+        plt.rcParams['xtick.minor.width'] = 0.25
+        plt.rcParams['ytick.minor.width'] = 0.25
+        plt.rcParams['grid.linewidth'] = 0.25
+        plt.rcParams['font.size'] = 8
+        plt.rcParams['xtick.labelsize'] = 5
+        plt.rcParams['ytick.labelsize'] = 5
+        plt.rcParams['axes.labelsize'] = 8
+        plt.rcParams['legend.fontsize'] = 8
+        plt.rcParams['figure.dpi'] = 150
     # set font to arial
     plt.rcParams['font.family'] = 'Arial'
 
@@ -71,31 +86,19 @@ def plot_J_some_types(J: torch.Tensor,
                       cell_count_in_ticks=False,
                       shuffle_within_types=False,
                       vmax=None):
-
-    if ax is None:
-        ax = plt.gca()
-    else:
-        plt.sca(ax)
-
-    all_neuron_inds = []
-    for t in types:
-        if shuffle_within_types:
-            all_neuron_inds.append(data.neuron_hash[t][np.random.permutation(len(data.neuron_hash[t]))])
-        else:
-            all_neuron_inds.append(data.neuron_hash[t])
-    
-    all_neuron_inds = np.concatenate(all_neuron_inds)
-    # get a sorting of cells from this type
-    all_type_inds = np.array([data.type_hash[t] for t in types])
-    all_onehots = data.onehot_types[all_neuron_inds]
-    all_onehots = all_onehots[:, all_type_inds]
-
-    J_submatrix = J[all_neuron_inds][:, all_neuron_inds]
-
-    plt.imshow(np.log(1 + J_submatrix), cmap='gray_r', interpolation='none', vmax=vmax)
-    # plt.xticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
-    # plt.yticks(*utils.tick_maker(types, all_onehots, include_counts=cell_count_in_ticks))
-
+    _, _, J_submatrix = plot_J(
+        J,
+        data,
+        types=types,
+        ax=ax,
+        type_borders=False,
+        tick_fontsize=5,
+        vmax=vmax,
+        dont_log=False,
+        cell_count_in_ticks=cell_count_in_ticks,
+        shuffle_within_types=shuffle_within_types,
+        return_submatrix=True,
+    )
     return J_submatrix
 
 
@@ -199,38 +202,45 @@ def summarize_embeddings_for_types(list_of_types, model, typehash):
     _ = plt.xticks(rotation=45)
 
 
-def plot_J(J, data: utils.ConnectivityData,
+def plot_J(J, data: data_utils.ConnectivityData,
            types: list=None,
            N_per_type=None,
            ax=None,
            type_borders=True,
            tick_fontsize=5,
-           vmax=None, dont_log=False):
+           vmax=None,
+           dont_log=False,
+           cell_count_in_ticks=False,
+           shuffle_within_types=False,
+           show_ticks=True,
+           return_submatrix=False):
     if ax is None:
         ax = plt.figure().gca()
 
     plt.sca(ax)
 
-    tick_inds = []
-    tick_labels = []
-
     if types is None:
         types = data.types
-    else:
-        N_per_type = np.zeros(len(types))
-        for i, t in enumerate(types):
-            N_per_type[i] = len(data.neuron_hash[t])
+
+    neuron_inds = []
+    for t in types:
+        if shuffle_within_types:
+            neuron_inds.append(data.neuron_hash[t][np.random.permutation(len(data.neuron_hash[t]))])
+        else:
+            neuron_inds.append(data.neuron_hash[t])
+    neuron_inds = np.concatenate(neuron_inds)
+
     if N_per_type is None:
-        N_per_type = data.N_per_type
+        N_per_type = np.array([len(data.neuron_hash[t]) for t in types])
     if len(types) != len(N_per_type):
         raise ValueError('types and N_per_type must have the same length')
 
-    for i, ut in enumerate(types):
-        tick_inds.append(np.sum(N_per_type[:i]) + N_per_type[i] / 2)
-        tick_labels.append(ut)
+    all_type_inds = np.array([data.type_hash[t] for t in types])
+    all_onehots = data.onehot_types[neuron_inds][:, all_type_inds]
+    tick_inds, tick_labels = utils.tick_maker(
+        types, all_onehots, include_counts=cell_count_in_ticks
+    )
 
-    # plt.imshow(np.log(1 + J), cmap='gray_r', interpolation='none')
-    neuron_inds = np.concatenate([data.neuron_hash[t] for t in types])
     J_subset = J[neuron_inds][:, neuron_inds]
 
     if dont_log:
@@ -244,9 +254,104 @@ def plot_J(J, data: utils.ConnectivityData,
             sum_till_now += N_per_type[i]
             plt.axvline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.2)
             plt.axhline(sum_till_now - 0.5, color='k', lw=0.1, alpha=0.2)
-    plt.xticks(tick_inds, tick_labels, rotation=90, fontsize=tick_fontsize)
-    plt.yticks(tick_inds, tick_labels, rotation=0, fontsize=tick_fontsize)
+
+    if show_ticks:
+        plt.xticks(tick_inds, tick_labels, rotation=90, fontsize=tick_fontsize)
+        plt.yticks(tick_inds, tick_labels, rotation=0, fontsize=tick_fontsize)
+    else:
+        plt.xticks([])
+        plt.yticks([])
+
+    if return_submatrix:
+        return tick_inds, tick_labels, J_subset
     return tick_inds, tick_labels
+
+
+def plot_J_from_to_types(J,
+                         data: data_utils.ConnectivityData,
+                         from_types: list,
+                         to_types: list,
+                         ax=None,
+                         tick_fontsize=5,
+                         vmax=None,
+                         dont_log=False,
+                         cell_count_in_ticks=False,
+                         shuffle_within_types=False,
+                         show_ticks=True,
+                         type_borders=True,
+                         return_submatrix=False):
+    """
+    Plot the submatrix of J with rows from from_types and columns from to_types.
+
+    Args:
+        J: full connectivity matrix
+        data: ConnectivityData object
+        from_types: list of source types (rows)
+        to_types: list of target types (columns)
+    """
+    if ax is None:
+        ax = plt.figure().gca()
+
+    plt.sca(ax)
+
+    row_inds = []
+    for t in from_types:
+        if shuffle_within_types:
+            row_inds.append(data.neuron_hash[t][np.random.permutation(len(data.neuron_hash[t]))])
+        else:
+            row_inds.append(data.neuron_hash[t])
+    row_inds = np.concatenate(row_inds)
+
+    col_inds = []
+    for t in to_types:
+        if shuffle_within_types:
+            col_inds.append(data.neuron_hash[t][np.random.permutation(len(data.neuron_hash[t]))])
+        else:
+            col_inds.append(data.neuron_hash[t])
+    col_inds = np.concatenate(col_inds)
+
+    n_from_per_type = np.array([len(data.neuron_hash[t]) for t in from_types])
+    n_to_per_type = np.array([len(data.neuron_hash[t]) for t in to_types])
+
+    from_type_inds = np.array([data.type_hash[t] for t in from_types])
+    to_type_inds = np.array([data.type_hash[t] for t in to_types])
+    from_onehots = data.onehot_types[row_inds][:, from_type_inds]
+    to_onehots = data.onehot_types[col_inds][:, to_type_inds]
+    y_tick_inds, y_tick_labels = utils.tick_maker(
+        from_types, from_onehots, include_counts=cell_count_in_ticks
+    )
+    x_tick_inds, x_tick_labels = utils.tick_maker(
+        to_types, to_onehots, include_counts=cell_count_in_ticks
+    )
+
+    J_subset = J[row_inds][:, col_inds]
+
+    if dont_log:
+        plt.imshow(J_subset, cmap='gray_r', interpolation='none', vmax=vmax, aspect='equal')
+    else:
+        plt.imshow(np.log(1 + J_subset), cmap='gray_r', interpolation='none', vmax=vmax, aspect='equal')
+
+    if type_borders:
+        sum_rows = 0
+        for i in range(len(n_from_per_type) - 1):
+            sum_rows += n_from_per_type[i]
+            plt.axhline(sum_rows - 0.5, color='k', lw=0.1, alpha=0.2)
+
+        sum_cols = 0
+        for i in range(len(n_to_per_type) - 1):
+            sum_cols += n_to_per_type[i]
+            plt.axvline(sum_cols - 0.5, color='k', lw=0.1, alpha=0.2)
+
+    if show_ticks:
+        plt.xticks(x_tick_inds, x_tick_labels, rotation=90, fontsize=tick_fontsize)
+        plt.yticks(y_tick_inds, y_tick_labels, rotation=0, fontsize=tick_fontsize)
+    else:
+        plt.xticks([])
+        plt.yticks([])
+
+    if return_submatrix:
+        return x_tick_inds, x_tick_labels, y_tick_inds, y_tick_labels, J_subset
+    return x_tick_inds, x_tick_labels, y_tick_inds, y_tick_labels
 
 
 def plot_embeddings_in_2d(types, data, model, ax=None, center_embs=False, scatter_kwargs={}):
