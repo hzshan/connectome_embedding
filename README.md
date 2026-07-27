@@ -2,8 +2,13 @@ This is the repository for [Graph embeddings for identifying symmetries in conne
 
 Created by [Haozhe Shan](hzshan.github.io).
 
-* `/connectome_embedding/` contains code for loading and analyzing connectome data.
-* `/notebooks_for_figures/` contains Jupyter notebooks for recreating the main figures. 
+* `/toolkit/` contains code for loading and analyzing connectome data.
+* `/notebooks_for_paper_figures/` contains Jupyter notebooks for recreating the main figures. 
+
+
+### Setup
+
+`cd` into `toolkit/` and run `pip install -e .` before using the notebooks.
 
 ### Data
 
