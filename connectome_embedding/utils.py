@@ -399,11 +399,9 @@ def circ_score_via_norm(embeddings_2d, skip_alignment=False):
     Compute the circularity of the given 2D embeddings by comparing the
     distance to the unit circle.
 
-    The circularity score is given by ||C-phi(E)||/||C||, where C is the unit
-    circle and phi is the best 2x2 affine transformation that aligns the
-    embeddings to the circle. If skip_alignment is True, the alignment step is
-    skipped.
-
+    Let E_2 be the Nx2 embeddings. Let C be the unit circle with N points.
+    the coefficient is given by
+    1 - ||E_2 - C||^2 / ||E_2 - E_2.mean(0)||^2
     Args:
         embeddings: Nx2 tensor, the set of N points to be evaluated
         skip_alignment: whether to skip the alignment step
@@ -421,8 +419,7 @@ def circ_score_via_norm(embeddings_2d, skip_alignment=False):
     unit_circle = make_circle(N)
 
     if skip_alignment:
-        centered_embeddings = embeddings_2d - embeddings_2d.mean(0)
-        return 1 - torch.norm(unit_circle - embeddings_2d)**2 / torch.norm(centered_embeddings)**2
+        return 1 - torch.norm(unit_circle - embeddings_2d)**2 / torch.norm(unit_circle)**2
 
     else:
         raise NotImplementedError("This part of the code is deprecated.")
