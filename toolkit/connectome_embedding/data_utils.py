@@ -113,11 +113,16 @@ def get_W_all_neuronall(datapath = "", min_num_per_type=5):
 
     neuronsall = neuronsall.take(inds_to_keep)
 
+    valid_bodyIds = set(neuronsall.bodyId)
+    conns = conns[conns.bodyId_pre.isin(valid_bodyIds) &
+                  conns.bodyId_post.isin(valid_bodyIds)]
+
     # store a large matrix of all connections
     Nall = len(neuronsall)
     W_all = np.zeros([Nall, Nall], dtype=np.uint)
 
     idhash = dict(zip(neuronsall.bodyId,np.arange(Nall)))
+    
     preinds = [idhash[x] for x in conns.bodyId_pre]
     postinds = [idhash[x] for x in conns.bodyId_post]
 
