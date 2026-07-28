@@ -1,6 +1,6 @@
-This is the repository for [Graph embeddings for identifying symmetries in connectomes (Shan and Litwin-Kumar, 2026)](https://scholar.google.com/citations?view_op=view_citation&hl=en&user=6CF1B8oAAAAJ&sortby=pubdate&citation_for_view=6CF1B8oAAAAJ:5nxA0vEk-isC). 
+This is the repository for [Graph embeddings for identifying symmetries in connectomes (Shan and Litwin-Kumar, 2026)](https://www.biorxiv.org/content/10.64898/2025.12.06.692615v2.abstract). 
 
-Created by [Haozhe Shan](hzshan.github.io). Some code for loading and processing connectomes is based on those from https://github.com/alitwinkumar/connectome_tools. 
+Created by [Haozhe Shan](https://hzshan.github.io). Some code for loading and processing connectomes is based on those from https://github.com/alitwinkumar/connectome_tools. 
 
 * `/toolkit/` contains code for loading and analyzing connectome data.
 * `/code_for_paper_figures/` contains Jupyter notebooks for recreating the main figures. 
