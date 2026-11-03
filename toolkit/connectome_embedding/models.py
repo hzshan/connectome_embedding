@@ -240,19 +240,72 @@ class InteractionModel(Model):
 
 
     def get_dist_mat_with_transforms(self):
+        """
+        Squared distance between every source neuron i and target neuron j,
+        after rotating the target's embedding by the rotation for their pair of
+        cell types: d_ij = || z_j R_{t_i t_j} - z_i ||^2. Returns N x N.
+        """
+        # Rotation matrices for every pair of cell types, indexed
+        # [source type, target type]: Ntype x Ntype x D x D.
         rotation_mats = self.get_rotation_mats()
 
-        # einsum notations: i, j index cells; c, d index cell types; x, y index embedding dimensions
-        blown_rot_mats = torch.einsum('ic,cdxy->idxy',
-                                      self.onehot_types, rotation_mats)
-        blown_rot_mats = torch.einsum('idxy,jd->ijxy',
-                                      blown_rot_mats, self.onehot_types) # N_source x N_target x D x D
+        # Cell type of each neuron as an integer label (0 .. Ntype-1): N
+        types = self.onehot_types.argmax(1)
 
-        transformed_target_embs = torch.einsum('jx,ijxy->ijy', self.embeddings, blown_rot_mats) # N_source x N_target x D
-        expanded_source_embs = torch.einsum('ix,j->ijx', self.embeddings, torch.ones(self.N)) # N_source x N_target x D
+        # Expanding the square splits the distance into three terms:
+        #     d_ij = ||z_i||^2 + ||z_j R||^2 - 2 z_i . (z_j R)
+        # Because R preserves length, ||z_j R||^2 = ||z_j||^2, so the first two
+        # terms don't involve the rotation at all. Compute each neuron's squared
+        # length once here: N
+        sq_norms = (self.embeddings**2).sum(1)
 
-        distance = torch.norm(transformed_target_embs - expanded_source_embs, dim=2)**2
-        return distance
+        # Only the cross term z_i . (z_j R) needs the rotation. Writing it as
+        # z_j . (R z_i) means we can rotate the SOURCE neuron instead: for a fixed
+        # target type, each source neuron needs only one rotation, however many
+        # neurons that target type has. So we go one target type at a time.
+        cross_blocks = []      # one N x n_d block of cross terms per target type
+        target_inds_all = []   # which neurons (columns) each block covers
+
+        for target_type in range(self.Ntype):
+            # Indices of the neurons that belong to this target type
+            target_inds = torch.nonzero(self.onehot_types[:, target_type], as_tuple=True)[0]
+
+            # A cell type with no neurons contributes no columns, so skip it
+            if len(target_inds) == 0:
+                continue
+
+            # For every source neuron i, look up the rotation R_{t_i, target_type}
+            # that applies when it connects to this target type: N x D x D.
+            # This is a lookup by type, so it stays small (one D x D per neuron).
+            source_rotations = rotation_mats[types, target_type]
+
+            # Rotate each source neuron once: R z_i for every i: N x D
+            rotated_sources = torch.einsum('ixy,iy->ix', source_rotations, self.embeddings)
+
+            # Cross term z_j . (R z_i) for all sources i and every target j of this
+            # type, done as one matrix multiply: N x n_d
+            cross_blocks.append(rotated_sources @ self.embeddings[target_inds].T)
+
+            # Remember which neurons these columns belong to
+            target_inds_all.append(target_inds)
+
+        # perm[k] = the neuron that column k of the stacked blocks belongs to.
+        # The blocks are grouped by type, so this is not the original neuron order.
+        perm = torch.cat(target_inds_all)
+
+        # inv_perm[j] = the column where neuron j ended up, i.e. the inverse of perm
+        inv_perm = torch.empty_like(perm)
+        inv_perm[perm] = torch.arange(len(perm), device=perm.device)
+
+        # Stack the blocks side by side, then reorder the columns so that
+        # column j is neuron j again: N x N
+        cross = torch.cat(cross_blocks, 1)[:, inv_perm]
+
+        # Add the three terms back together. sq_norms[:, None] varies along rows
+        # (the source's length), sq_norms[None, :] along columns (the target's).
+        # The previous version built an N x N x D x D tensor of per-pair rotations
+        # (~6.6 GB at N = 8145, D = 5); here the largest array is N x N.
+        return sq_norms[:, None] + sq_norms[None, :] - 2 * cross
 
 
     def pred_synapses(self):
