@@ -116,40 +116,60 @@ class AsymModel(Model):
 
 class SourceTargetModel(Model):
     """
-    Model with separate source and target embeddings.
+    Model with separate source (presynaptic) and target (postsynaptic)
+    embeddings, allowing asymmetric expected connectivity (W_ij != W_ji),
+    including within a cell type.
 
-    target embeddings = embeddings + target_modifier
+    source embedding of neuron i: z_i
+    target embedding of neuron j: z_j + m_j   (m = target_modifier)
+
+    E[W_ij] = f(A_cd * exp(-||z_i - (z_j + m_j)||^2 / (C_cd^2 + eps)) + B_cd)
+
+    The modifier is initialized at zero, so training starts from the
+    symmetric model; it nests the symmetric model (m = 0), which makes
+    likelihood comparisons between the two straightforward. Use
+    `modifier_penalty` in a reg_fn to control how far it departs from
+    symmetry.
     """
 
-    def __init__(self, N, Ntype, D, wrapper_fn='exp'):
-        super().__init__(N, Ntype, D, wrapper_fn)
+    def __init__(self, N, Ntype, D, onehot_types, wrapper_fn='exp'):
+        super().__init__(N, Ntype, D, onehot_types, wrapper_fn=wrapper_fn)
 
-        self.target_modifier = torch.tensor(
-            np.zeros((N, D)),
-            requires_grad=True,
-            dtype=torch.float32)
-        
+        self.target_modifier = torch.zeros(
+            (N, D), requires_grad=True, dtype=torch.float32)
+
         self.params += [self.target_modifier]
-    
-    def pred_synapses(self, ctype_onehots):
+
+    @property
+    def source_embeddings(self):
+        return self.embeddings
+
+    @property
+    def target_embeddings(self):
+        return self.embeddings + self.target_modifier
+
+    def modifier_penalty(self):
+        """Mean squared size of the target modifier (for use in reg_fn)."""
+        return torch.mean(self.target_modifier**2)
+
+    def pred_synapses(self):
         """
-        ctype_onehots: N x Ntype
+        Predict the mean number of synapses from each neuron (row, source)
+        to each neuron (column, target). Self-connections are set to zero.
         """
         eps_dist = 0.01
 
-        scaling = ctype_onehots @ self.A @ ctype_onehots.T
-        covar = ctype_onehots @ (self.C**2 + eps_dist) @ ctype_onehots.T
-        bias = ctype_onehots @ self.B @ ctype_onehots.T
+        scaling = self.onehot_types @ self.A @ self.onehot_types.T
+        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
+        bias = self.onehot_types @ self.B @ self.onehot_types.T
 
-        source_emb = self.embeddings
-        target_emb = self.embeddings + self.target_modifier
+        dist_sq = torch.cdist(self.source_embeddings,
+                              self.target_embeddings)**2
 
-        dist_sq = torch.cdist(source_emb, target_emb)**2
+        mean = self.wrapper_fn(scaling * torch.exp(-dist_sq / covar) + bias)
 
-        content = scaling * torch.exp(-dist_sq / covar) + bias
+        return mean - torch.diag(mean.diag())  # remove self-connections
 
-        return  self.wrapper_fn(content)
-    
 
 class InteractionModel(Model):
     """
