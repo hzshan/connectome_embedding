@@ -303,8 +303,8 @@ class InteractionModel(Model):
 
         # Add the three terms back together. sq_norms[:, None] varies along rows
         # (the source's length), sq_norms[None, :] along columns (the target's).
-        # The previous version built an N x N x D x D tensor of per-pair rotations
-        # (~6.6 GB at N = 8145, D = 5); here the largest array is N x N.
+        # Computed this way, the largest array is N x N; building a separate
+        # rotation for every neuron pair would need an N x N x D x D tensor.
         return sq_norms[:, None] + sq_norms[None, :] - 2 * cross
 
 
