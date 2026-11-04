@@ -43,7 +43,7 @@ TYPES_WANTED = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
 MIN_NUM_PER_TYPE = 10
 SPLIT_LR = []  # no L/R split
 
-DS = [2, 3, 5, 7, 9]          # embedding dimensions to compare
+DS = [3, 5, 7, 9]          # embedding dimensions to compare
 DS_WITHOUT_TYPES = [3, 5, 7, 9, 11]  # without cell types: skip D = 2, add D = 11
 SEEDS = [0, 1, 2, 3, 4, 5]       # one train/test split and initialization per seed
 TRAIN_FRACTION = 0.8          # fraction of neuron pairs used for training
