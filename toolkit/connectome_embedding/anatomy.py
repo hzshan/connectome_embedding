@@ -4,7 +4,8 @@ labels with angles read off an embedding.
 
   anatomical_labels   PB glomerulus, FB column, soma side from instance names
   add_fb_angles       FB column -> angle, columns of a type tiling the circle
-  pca_angles          angle in the top two principal components of all embeddings
+  pca_angles          angle of the embeddings projected on the top two PCs of a reference
+                      type (or of all embeddings)
   alignment           circular alignment R between two sets of angles, allowing a
                       global rotation, a reflection and a winding factor
   score_groups        R per cell type (and PB side) with a shuffled-label null
@@ -107,13 +108,17 @@ def add_fb_angles(labels):
     return labels
 
 
-def pca_angles(embeddings):
+def pca_angles(embeddings, reference_inds=None):
     """
-    Angle of each neuron as used by utils.sort_embeddings (default method):
-    project all embeddings onto their top two right singular vectors, take arctan.
+    Angle of each neuron: project the embeddings onto two directions and take arctan.
+
+    The directions are the top two right singular vectors of the embeddings of the
+    neurons in reference_inds (centered; e.g. all EPG neurons), or of all embeddings
+    if reference_inds is None.
     """
-    _, _, V = torch.svd(embeddings)
-    projected = (embeddings @ V).numpy()
+    reference = embeddings if reference_inds is None else embeddings[reference_inds]
+    _, _, V = torch.svd(reference - reference.mean(0))
+    projected = (embeddings @ V[:, :2]).numpy()
     return np.arctan2(projected[:, 1], projected[:, 0])
 
 
@@ -157,12 +162,15 @@ def score_groups(labels, angle_column, rng, windings=(1, 0.5, 2),
     Score every group of neurons with anatomical labels:
       - PB glomerulus: one group per cell type and PB side
       - FB column:     one group per cell type
-    Returns one row per group.
+    Returns one row per group. A label kind is skipped if its anatomy column is
+    not in labels (e.g. no fb_angle_deg when add_fb_angles was not called).
     """
     rows = []
     for label_kind, anatomy_column, group_keys in [
             ('PB glomerulus', 'pb_angle_deg', ['type', 'pb_side']),
             ('FB column', 'fb_angle_deg', ['type'])]:
+        if anatomy_column not in labels.columns:
+            continue
 
         labelled = labels[labels[anatomy_column].notna() & labels[angle_column].notna()]
         for keys, group in labelled.groupby(group_keys):
