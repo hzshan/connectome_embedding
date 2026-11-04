@@ -1,5 +1,6 @@
 #%%
-#TODO: create code for generating the embeddings and the null circularity coefficient distribution
+# The null distribution of circularity scores is made by circle_null_random_points.py.
+#TODO: create code for generating the embeddings
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,6 +25,13 @@ CXmodel_and_data = pickle.load(open(CXembedding_name, 'rb'))
 CXmodel = CXmodel_and_data['model']
 CXdata = CXmodel_and_data['data']
 
+# Settings of the circle search; must match the ones used to make the null
+CIRCLE_SEARCH = {'nseeds_to_try': 50, 'max_iter': 10}
+
+# Null distribution of circularity scores for random points, made by circle_null_random_points.py
+null = pickle.load(open('circle_null_random_points_D5.pkl', 'rb'))
+assert null['circle_search'] == CIRCLE_SEARCH, 'null was made with a different circle search'
+
 def evaluate_circularity(model, data):
     embeddings_2d = []
     best_projs = []
@@ -34,7 +42,7 @@ def evaluate_circularity(model, data):
         print(type)
         x = model.embeddings[data.neuron_hash[type]]
 
-        found_circle, projs, perms = utils.solve_shadowmatic2(x, nseeds_to_try=50, max_iter=10)
+        found_circle, projs, perms = utils.solve_shadowmatic2(x, **CIRCLE_SEARCH)
         embeddings_2d.append(found_circle)
         best_perms.append(perms)
         best_projs.append(projs)
@@ -43,12 +51,18 @@ def evaluate_circularity(model, data):
     for i in range(len(data.types)):
         circularity_via_norm[i] = utils.circ_score_via_norm(embeddings_2d[i], skip_alignment=True)
 
-    baseline = pickle.load(open('../baseline_circ_coef_D5.pkl', 'rb'))
-    assert baseline['D'] == model.embeddings.shape[1]
+    assert null['D'] == model.embeddings.shape[1], 'null was made for a different embedding dimension'
 
     p_values = np.zeros(len(data.types))
     for i in range(len(data.types)):
-        scores_from_random_points_same_N = baseline['circ_scores'][:, np.min([int(data.N_per_type[i] - 1), 148])]
+        # Null scores for random point clouds with as many points as this type has neurons.
+        # The null only goes up to N = max_N (149), so larger types use the max_N null.
+        # This is extra conservative: random points fit a circle less well as N grows,
+        # so the null for a larger N would sit lower, and the type's p-value would be
+        # smaller. Using the max_N null can only make large types look less significant.
+        # (Worth confirming on the null-vs-N plot from circle_null_random_points.py.)
+        N = min(int(data.N_per_type[i]), null['max_N'])
+        scores_from_random_points_same_N = null['scores'][N]
         p_values[i] = 1 - stats.norm.cdf(circularity_via_norm[i], np.mean(scores_from_random_points_same_N), np.std(scores_from_random_points_same_N))
 
     return circularity_via_norm, p_values
