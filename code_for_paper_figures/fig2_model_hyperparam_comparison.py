@@ -1,14 +1,19 @@
 #%%
 """
-Held-out log-likelihood of the embedding model vs number of parameters, with and
-without cell-type information (Fig. 2), on the central complex connectome.
+Held-out log-likelihood of the embedding model vs number of parameters (Fig. 2),
+on the central complex connectome, for three models.
 
 For each random seed, a random TRAIN_FRACTION of all neuron pairs (excluding
 self-connections) is used to fit the model and the remaining pairs are held out.
-The seed sets both the split and the initialization. Both models are fit on the
+The seed sets both the split and the initialization. All models are fit on the
 same split:
-  - with cell types:    kernel parameters (A, B, C) for every pair of cell types
-  - without cell types: all neurons treated as a single type (one A, B, C)
+  - 'with_types':     kernel parameters (A, B, C) for every pair of cell types
+  - 'without_types':  all neurons treated as a single type (one A, B, C)
+  - 'source_target':  as 'with_types', but each neuron also has a separate target
+                      embedding z_j + m_j, so expected connectivity can be
+                      asymmetric (W_ij != W_ji), also within a cell type
+                      (models.SourceTargetModel; m starts at 0, so the model nests
+                      'with_types')
 Rotations are not fit here.
 
 Reported per run: Poisson log-likelihood per neuron pair on the training and
@@ -43,8 +48,13 @@ TYPES_WANTED = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
 MIN_NUM_PER_TYPE = 10
 SPLIT_LR = []  # no L/R split
 
-DS = [3, 5, 7, 9]          # embedding dimensions to compare
-DS_WITHOUT_TYPES = [3, 5, 7, 9, 11]  # without cell types: skip D = 2, add D = 11
+# embedding dimensions to compare, per model
+DIMS = {
+    'with_types': [3, 5, 7, 9],
+    'without_types': [3, 5, 7, 9, 11],
+    'source_target': [3, 5, 7, 9],
+}
+MODELS = list(DIMS)
 SEEDS = [0, 1, 2, 3, 4, 5]       # one train/test split and initialization per seed
 TRAIN_FRACTION = 0.8          # fraction of neuron pairs used for training
 
@@ -54,18 +64,23 @@ TRAINING = {
     'lr': 0.05,
     'steps': 10000,
     'loss_type': 'poisson',
+    'modifier_regularizer': 0.01,   # source_target only: penalty on the target modifier m
 }
 
 SAVE_DIR = 'fig2_embeddings'                 # one pickle per fitted embedding
 
 
-def embedding_filename(D, seed, use_cell_types):
-    types_tag = 'with_types' if use_cell_types else 'without_types'
-    return os.path.join(SAVE_DIR, f'CX_D{D}_seed{seed}_{types_tag}.pkl')
+def embedding_filename(D, seed, model_kind):
+    return os.path.join(SAVE_DIR, f'CX_D{D}_seed{seed}_{model_kind}.pkl')
 
 
-def dims_for(use_cell_types):
-    return DS if use_cell_types else DS_WITHOUT_TYPES
+def n_params(model_kind, D):
+    """Free parameters: embeddings, A, B, C per pair of types, and the target modifier."""
+    Ntype = 1 if model_kind == 'without_types' else data.Ntype
+    n = data.N * D + 3 * Ntype**2
+    if model_kind == 'source_target':
+        n += data.N * D
+    return n
 
 
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -105,14 +120,15 @@ def poisson_log_likelihood(model, target_mat, mask):
         return -poisson_nll(preds[mask], target_mat[mask]).item()
 
 
-def fit_and_evaluate(D, seed, use_cell_types, train_mask, test_mask):
+def fit_and_evaluate(D, seed, model_kind, train_mask, test_mask):
     """
     Fit one model on the training pairs, score it on both sets of pairs, and save it
-    (with its scores) to embedding_filename(D, seed, use_cell_types).
+    (with its scores) to embedding_filename(D, seed, model_kind).
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+    use_cell_types = model_kind != 'without_types'
     if use_cell_types:
         Ntype, onehot_types = data.Ntype, data.onehot_types
     else:
@@ -132,18 +148,29 @@ def fit_and_evaluate(D, seed, use_cell_types, train_mask, test_mask):
         'split_LR': SPLIT_LR,
         'fit_rotations': False,
         'seed': seed,
+        'model': model_kind,
         'use_cell_types': use_cell_types,
         'train_fraction': TRAIN_FRACTION,
-        'save_filename': embedding_filename(D, seed, use_cell_types),
+        'save_filename': embedding_filename(D, seed, model_kind),
     }
 
-    model = models.InteractionModel(N=data.N, Ntype=Ntype, D=D,
-                                    onehot_types=onehot_types,
-                                    wrapper_fn=hp['wrapper_fn'])
-    model.use_transforms = False  # no rotations
+    if model_kind == 'source_target':
+        hp['modifier_regularizer'] = TRAINING['modifier_regularizer']
+        model = models.SourceTargetModel(N=data.N, Ntype=Ntype, D=D,
+                                         onehot_types=onehot_types,
+                                         wrapper_fn=hp['wrapper_fn'])
 
-    def reg_fn(model):
-        return torch.mean(model.embeddings**2) * hp['embedding_regularizer']
+        def reg_fn(model):
+            return torch.mean(model.embeddings**2) * hp['embedding_regularizer'] +\
+                model.modifier_penalty() * hp['modifier_regularizer']
+    else:
+        model = models.InteractionModel(N=data.N, Ntype=Ntype, D=D,
+                                        onehot_types=onehot_types,
+                                        wrapper_fn=hp['wrapper_fn'])
+        model.use_transforms = False  # no rotations
+
+        def reg_fn(model):
+            return torch.mean(model.embeddings**2) * hp['embedding_regularizer']
 
     losses, _, _ = models.train_model(
         model, target_mat=data.J,
@@ -152,6 +179,8 @@ def fit_and_evaluate(D, seed, use_cell_types, train_mask, test_mask):
         reg_fn=reg_fn, train_mask=train_mask, test_mask=test_mask)
 
     model.embeddings = model.embeddings.detach()
+    if model_kind == 'source_target':
+        model.target_modifier = model.target_modifier.detach()
 
     train_loglik = poisson_log_likelihood(model, data.J, train_mask)
     test_loglik = poisson_log_likelihood(model, data.J, test_mask)
@@ -180,20 +209,19 @@ def load_results(seeds=SEEDS):
     """
     rows = []
     for seed in seeds:
-        for use_cell_types in [True, False]:
-            for D in dims_for(use_cell_types):
-                filename = embedding_filename(D, seed, use_cell_types)
+        for model_kind in MODELS:
+            for D in DIMS[model_kind]:
+                filename = embedding_filename(D, seed, model_kind)
                 if not os.path.isfile(filename):
                     print(f'missing: {filename}')
                     continue
                 with open(filename, 'rb') as f:
                     saved = pickle.load(f)
-                Ntype = saved['data'].Ntype if saved['hyperparams']['use_cell_types'] else 1
                 rows.append({
                     'D': D,
                     'seed': seed,
-                    'cell_types': use_cell_types,
-                    'n_params': saved['data'].N * D + 3 * Ntype**2,
+                    'model': model_kind,
+                    'n_params': n_params(model_kind, D),
                     'train_loglik': saved['train_loglik'],
                     'test_loglik': saved['test_loglik'],
                     'embedding_file': filename,
@@ -201,32 +229,40 @@ def load_results(seeds=SEEDS):
     return pd.DataFrame(rows)
 
 
-#%% Fit every combination of seed, D and with/without cell types
+#%% Fit every combination of seed, model and D
 # Runs whose pickle already exists are skipped, never overwritten, so only new runs
-# (e.g. a newly added D) are fit when the script is run again.
+# (e.g. a newly added D or model) are fit when the script is run again.
 for seed in SEEDS:
-    # same split for every D and both models with this seed
+    # same split for every D and every model with this seed
     train_mask, test_mask = make_split(data.N, TRAIN_FRACTION, seed)
-    for use_cell_types in [True, False]:
-        for D in dims_for(use_cell_types):
-            if os.path.isfile(embedding_filename(D, seed, use_cell_types)):
-                print(f'seed {seed}, D = {D}, cell types: {use_cell_types}: already fit, skipping')
+    for model_kind in MODELS:
+        for D in DIMS[model_kind]:
+            if os.path.isfile(embedding_filename(D, seed, model_kind)):
+                print(f'seed {seed}, D = {D}, {model_kind}: already fit, skipping')
                 continue
-            print(f'seed {seed}, D = {D}, cell types: {use_cell_types}')
-            fit_and_evaluate(D, seed, use_cell_types, train_mask, test_mask)
+            print(f'seed {seed}, D = {D}, {model_kind}')
+            fit_and_evaluate(D, seed, model_kind, train_mask, test_mask)
 
 #%% Load the results from the saved pickles
 results = load_results()
 print(f'Loaded {len(results)} runs from {SAVE_DIR}')
-print(results.groupby(['cell_types', 'D'])[['train_loglik', 'test_loglik']].agg(['mean', 'std']))
+print(results.groupby(['model', 'D'])[['train_loglik', 'test_loglik']].agg(['mean', 'std']))
 
 
 #%% Plot: log-likelihood vs number of parameters, mean across seeds with error bars (std across seeds)
-def plot_loglik_vs_n_params(results, column, ylabel):
+MODEL_STYLES = {
+    'with_types': ('r', 'with cell types'),
+    'without_types': ('k', 'without cell types'),
+    'source_target': ('C0', 'with cell types, source/target'),
+}
+
+def plot_loglik_vs_n_params(results, column, ylabel, model_kinds=MODELS):
     plt.figure(dpi=300, figsize=(2, 1.5))
-    for use_cell_types, color, label in [(True, 'r', 'with cell types'),
-                                         (False, 'k', 'without cell types')]:
-        subset = results[results['cell_types'] == use_cell_types]
+    for model_kind in model_kinds:
+        color, label = MODEL_STYLES[model_kind]
+        subset = results[results['model'] == model_kind]
+        if len(subset) == 0:
+            continue
         # n_params is the same for every seed at a given D and model
         stats = subset.groupby('n_params')[column].agg(['mean', 'std'])
         plt.errorbar(stats.index, stats['mean'], yerr=stats['std'], color=color,
@@ -236,7 +272,16 @@ def plot_loglik_vs_n_params(results, column, ylabel):
     plt.legend(fontsize=6)
     plt.tight_layout()
 
-plot_loglik_vs_n_params(results, 'test_loglik', 'log-likelihood\nper pair (held out)')
-plot_loglik_vs_n_params(results, 'train_loglik', 'log-likelihood\nper pair (training)')
+# Fig. 2: with vs without cell types
+plot_loglik_vs_n_params(results, 'test_loglik', 'log-likelihood\nper pair (held out)',
+                        model_kinds=['with_types', 'without_types'])
+plot_loglik_vs_n_params(results, 'train_loglik', 'log-likelihood\nper pair (training)',
+                        model_kinds=['with_types', 'without_types'])
+
+# symmetric vs source/target, both with cell types
+plot_loglik_vs_n_params(results, 'test_loglik', 'log-likelihood\nper pair (held out)',
+                        model_kinds=['with_types', 'source_target'])
+plot_loglik_vs_n_params(results, 'train_loglik', 'log-likelihood\nper pair (training)',
+                        model_kinds=['with_types', 'source_target'])
 
 # %%
