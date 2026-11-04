@@ -29,9 +29,9 @@ Anatomical angles:
   - FB column: the columns of a cell type are taken to tile the full circle evenly,
     angle = 360 * (column - 1) / (number of columns of that type).
 
-Angles from the embedding: the angle used by utils.sort_embeddings (its default):
-project all embeddings onto their top two right singular vectors and take the
-arctangent.
+Angles from the embedding: project all embeddings onto the top two principal
+components of the embeddings of a reference cell type (REFERENCE_TYPE, EPG) and take
+the arctangent.
 
 Comparison: connectivity alone cannot fix where 0 degrees is or which way is
 clockwise, so each comparison allows one global rotation and one reflection.
@@ -63,6 +63,9 @@ from connectome_embedding import plots, anatomy
 # Settings
 # ---------------------------------------------------------------------------
 EMBEDDING_NAME = 'CX_embedding.pkl'
+
+# Reference cell type: all embeddings are projected on the top two PCs of its embeddings
+REFERENCE_TYPE = 'EPG'
 
 # Number of distinct phases per side of the PB: glomeruli 1..8, with 9 the same as 1
 PB_PERIOD = 8
@@ -109,7 +112,7 @@ n_labelled = (labels['pb_glomerulus'].notna() | labels['fb_column'].notna()).sum
 print(f'{n_labelled} of {len(labels)} neurons have a PB glomerulus or FB column')
 
 #%% Angles from the embedding
-labels['angle_pca'] = anatomy.pca_angles(embeddings)
+labels['angle_pca'] = anatomy.pca_angles(embeddings, data, REFERENCE_TYPE)
 
 #%% Compare, per cell type
 scores = anatomy.score_groups(labels, 'angle_pca', rng, windings=WINDINGS,

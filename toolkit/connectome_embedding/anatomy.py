@@ -4,7 +4,8 @@ labels with angles read off an embedding.
 
   anatomical_labels   PB glomerulus, FB column, soma side from instance names
   add_fb_angles       FB column -> angle, columns of a type tiling the circle
-  pca_angles          angle of the embeddings projected on the top two PCs of a reference
+  pca_angles          angle of the embeddings projected onto a reference type's plane
+                      (or the top two PCs of all embeddings)
                       type (or of all embeddings)
   alignment           circular alignment R between two sets of angles, allowing a
                       global rotation, a reflection and a winding factor
@@ -13,7 +14,8 @@ labels with angles read off an embedding.
 import re
 import numpy as np
 import pandas as pd
-import torch
+
+from .utils import projection_directions
 
 
 # A single PB glomerulus: "_L4" or "_R7", followed by "_" or the end of the name.
@@ -28,7 +30,7 @@ FB_COLUMN = re.compile(r'_C(\d+)[a-z]?(?=_|$)')
 SOMA_SIDE = re.compile(r'_([LR])(?=_|$)')
 
 
-def parse_instance(instance):
+def parse_hemibrain_instance(instance):
     """
     Read the anatomical labels encoded in one hemibrain instance name.
 
@@ -73,7 +75,7 @@ def anatomical_labels(neurons, pb_period=8):
     Adds pb_angle_deg: the angle implied by the PB glomerulus, within its side,
     (glomerulus - 1) mod pb_period * 360 / pb_period.
     """
-    parsed = pd.DataFrame([parse_instance(name) for name in neurons['instance']])
+    parsed = pd.DataFrame([parse_hemibrain_instance(name) for name in neurons['instance']])
 
     labels = pd.DataFrame({
         'row': np.arange(len(neurons)),            # row in model.embeddings
@@ -108,17 +110,17 @@ def add_fb_angles(labels):
     return labels
 
 
-def pca_angles(embeddings, reference_inds=None):
+def pca_angles(embeddings, data, reference_type=None):
     """
-    Angle of each neuron: project the embeddings onto two directions and take arctan.
+    Angle of each neuron: project the embeddings onto a reference-optimized plane.
 
-    The directions are the top two right singular vectors of the embeddings of the
-    neurons in reference_inds (centered; e.g. all EPG neurons), or of all embeddings
-    if reference_inds is None.
+    The directions come from utils.projection_directions: solve_shadowmatic2 on the
+    embeddings of reference_type (e.g. 'EPG'), or the top two PCs of all embeddings
+    if reference_type is None. Same arguments as utils.sort_embeddings.
     """
-    reference = embeddings if reference_inds is None else embeddings[reference_inds]
-    _, _, V = torch.svd(reference - reference.mean(0))
-    projected = (embeddings @ V[:, :2]).numpy()
+    reference_inds = None if reference_type is None else data.neuron_hash[reference_type]
+    projection = projection_directions(embeddings, reference_inds)
+    projected = (embeddings @ projection).detach().numpy()
     return np.arctan2(projected[:, 1], projected[:, 0])
 
 

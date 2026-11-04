@@ -52,8 +52,25 @@ def tick_maker(unique_types, onehot_types, return_idx=False, include_counts=True
         return tick_inds, tick_labels
 
 
+def projection_directions(embeddings, reference_inds=None):
+    """
+    Two directions (D x 2) to project embeddings onto for reading off angles.
+
+    With reference_inds, the directions come from solve_shadowmatic2 on the
+    centered embeddings of those neurons (e.g. all EPG neurons). Without, they
+    are the top two PCs of all embeddings.
+    """
+    if reference_inds is None:
+        _, _, V = torch.svd(embeddings - embeddings.mean(0))
+        return V[:, :2]
+    reference = embeddings[reference_inds]
+    reference = reference - reference.mean(0)
+    _, proj, _ = solve_shadowmatic2(reference, nseeds_to_try=50, max_iter=10)
+    return proj
+
+
 def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
-                    full_method=False, reference_type=None):
+                    reference_type=None):
     """
     Sort the embeddings. 
     
@@ -61,31 +78,20 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
     second 20 neurons are type 2, ..., then after sorting, the first 30 neurons
     are still type 1, second 20 neurons are still type 2, etc.
 
-    Full method for sorting: solve shadowmatic problem for embeddings of each
-    cell type, and then order the neurons by their location on the circle. This
-    can be slow for large datasets.
-
-    "Cheap method": project all embeddings on the top two PCs. Sort by the
-    arctan.
+    All embeddings are projected onto two directions and sorted within each type
+    by the arctan of the projection. See projection_directions for how the
+    directions depend on reference_type.
 
     Args:
     embeddings: N x D torch tensor, the embeddings
     data: ConnectivityData, the data object
-    full_method: bool, whether to use the full method for sorting
+    reference_type: cell type whose embeddings define the projection
 
     Returns:
     sorted_inds: N-dim np.array, the indices of the sorted embeddings
     """
-    if reference_type is None:
-        _, _, V = torch.svd(embeddings)
-        projected_all_embeddings = embeddings @ V
-    else:
-        ref_embeddings = embeddings[data.neuron_hash[reference_type]]
-        ref_embeddings -= ref_embeddings.mean(0)
-        _, proj, _  = solve_shadowmatic2(
-            ref_embeddings, nseeds_to_try=50, max_iter=10
-        )
-        projected_all_embeddings = embeddings @ proj
+    reference_inds = None if reference_type is None else data.neuron_hash[reference_type]
+    projected_all_embeddings = embeddings @ projection_directions(embeddings, reference_inds)
 
     sorted_inds = []
 
@@ -93,17 +99,9 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
         start_ind = int(data.N_per_type[:i].sum())
         end_ind = int(data.N_per_type[:i+1].sum())
 
-        if full_method:
-            # solve shadowmatic problem for embeddings of each cell type
-            _, _, best_perm = solve_shadowmatic2(
-                embeddings[start_ind: end_ind], 50
-            )
-            inds = best_perm @ np.arange(len(best_perm))
-            sorted_inds += list(inds + len(sorted_inds))
-        else:
-            angle = np.arctan2(projected_all_embeddings[start_ind:end_ind, 1],
-                            projected_all_embeddings[start_ind:end_ind, 0])
-            sorted_inds += list(np.argsort(angle) + len(sorted_inds))
+        angle = np.arctan2(projected_all_embeddings[start_ind:end_ind, 1],
+                           projected_all_embeddings[start_ind:end_ind, 0])
+        sorted_inds += list(np.argsort(angle) + len(sorted_inds))
     sorted_inds = np.array(sorted_inds)
     return sorted_inds
 
