@@ -8,13 +8,11 @@ labels with angles read off an embedding.
   alignment           circular alignment R between two sets of angles, allowing a
                       global rotation, a reflection and a winding factor
   score_groups        R per cell type (and PB side) with a shuffled-label null
-  plot_examples       embedding angle vs PB angle for a few cell types
 """
 import re
 import numpy as np
 import pandas as pd
 import torch
-import matplotlib.pyplot as plt
 
 
 # A single PB glomerulus: "_L4" or "_R7", followed by "_" or the end of the name.
@@ -193,36 +191,3 @@ def score_groups(labels, angle_column, rng, windings=(1, 0.5, 2),
                 'winding': winding,
             })
     return pd.DataFrame(rows)
-
-
-def plot_examples(labels, angle_column, example_types, windings=(1, 0.5, 2)):
-    """Embedding angle vs PB glomerulus angle, after the best rotation/reflection, for a few types."""
-    groups = [(t, side) for t in example_types if t in set(labels['type'])
-              for side in sorted(labels.loc[labels['type'] == t, 'pb_side'].dropna().unique())]
-    if not groups:
-        return
-    _, axes = plt.subplots(1, len(groups), figsize=(1.3 * len(groups), 1.4), dpi=300, squeeze=False)
-    for ax, (t, side) in zip(axes[0], groups):
-        g = labels[(labels['type'] == t) & (labels['pb_side'] == side)
-                   & labels['pb_angle_deg'].notna() & labels[angle_column].notna()]
-        theta_anatomy = np.radians(g['pb_angle_deg'].values)
-        theta_embedding = g[angle_column].values
-        R, reflected, winding, rotation, _ = alignment(theta_embedding, theta_anatomy, windings)
-        sign = -1 if reflected else 1
-        # undo the best rotation/reflection so points sit on the line when orders agree
-        aligned = np.degrees(np.angle(np.exp(1j * (sign * theta_embedding - rotation)))) % 360
-        ax.scatter(g['pb_angle_deg'], aligned, s=4, color='k')
-        for turn in range(int(np.ceil(winding))):
-            start = 360 * turn / winding
-            stop = min(360, 360 * (turn + 1) / winding)
-            x_line = np.array([start, stop])
-            y_line = winding * x_line - 360 * turn
-            ax.plot(x_line, y_line, color='gray', lw=0.5, zorder=0)
-        ax.set_xlim(-20, 360)
-        ax.set_ylim(-20, 380)
-        ax.set_xticks([0, 180, 360])
-        ax.set_yticks([0, 180, 360])
-        ax.set_title(f'{t} ({side}), R = {R:.2f}, k = {winding:g}', fontsize=5)
-        ax.set_xlabel('PB glomerulus angle', fontsize=5)
-    axes[0][0].set_ylabel('embedding angle\n(aligned)', fontsize=5)
-    plt.tight_layout()
