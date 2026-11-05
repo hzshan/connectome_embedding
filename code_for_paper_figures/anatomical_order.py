@@ -34,20 +34,20 @@ components of the embeddings of a reference cell type (REFERENCE_TYPE, EPG) and 
 the arctangent.
 
 Comparison: connectivity alone cannot fix where 0 degrees is or which way is
-clockwise, so each comparison allows one global rotation and one reflection.
+clockwise, so the order of the embedding angles around the circle is compared with the
+anatomical order allowing one cut of the circle and one direction (reflection).
 The two PB sides of a cell type can also sit on the embedding circle in two ways:
 as two copies of the full circle (e.g. EPG: glomeruli 1..8 of each side go once
 around), or as the two halves of one circle (e.g. PEN: glomeruli 1..8 of each side
 cover half of it). So each comparison also allows the anatomical angle to be scaled
 by a winding factor k in WINDINGS (1 = full circle per side, 0.5 = half circle,
 2 = twice around the circle).
-The score is the circular alignment
-    R = max over reflection s and winding k of
-        | mean_i exp(i (s * theta_embedding - k * theta_anatomy)) |,
-which is 1 when the two orders agree up to rotation/reflection and near 0 when
-they are unrelated. The chosen k is reported. Also reported: the median absolute angle error after the best
-rotation/reflection, and the null distribution of R (anatomical labels shuffled
-within the group, with the same maximization over s and k): its median and 2.5th/97.5th
+The score is Kendall's tau between the two orders (best cut, direction and k), using
+only pairs of neurons at different anatomical positions, so neurons at the same
+position can be in any order. It is 1 when the orders agree and about 0.3-0.5 when
+they are unrelated (it is maximized over cuts, directions and k). The chosen k is
+reported, together with the null distribution of tau (anatomical labels shuffled
+within the group, with the same maximization): its median and 2.5th/97.5th
 percentiles. The null is not centered at 0, especially for small groups.
 
 Run from code_for_paper_figures/. Saves a CSV of per-neuron labels and angles and a
@@ -81,7 +81,7 @@ WINDINGS = (1, 0.5, 2)
 MIN_NEURONS = 4
 MIN_POSITIONS = 3
 
-# Shuffles of the anatomical labels used to estimate the null distribution of R
+# Shuffles of the anatomical labels used to estimate the null distribution of tau
 N_SHUFFLES = 1000
 
 embedding_tag = EMBEDDING_NAME.split('/')[-1].replace('.pkl', '')
@@ -118,26 +118,26 @@ labels['angle_pca'] = anatomy.pca_angles(embeddings, data, REFERENCE_TYPE)
 scores = anatomy.score_groups(labels, 'angle_pca', rng, windings=WINDINGS,
                               min_neurons=MIN_NEURONS, min_positions=MIN_POSITIONS,
                               n_shuffles=N_SHUFFLES)
-print(scores.sort_values('R', ascending=False).to_string(index=False))
+print(scores.sort_values('tau', ascending=False).to_string(index=False))
 
 #%% Plots
-# dot plot of R per group, sorted by R; shuffle null as median with 2.5-97.5 percentile bars
-plot_data = scores.sort_values('R', ascending=False)
+# dot plot of tau per group, sorted by tau; shuffle null as median with 2.5-97.5 percentile bars
+plot_data = scores.sort_values('tau', ascending=False)
 group_names = (plot_data['type']
                + plot_data['pb_side'].fillna('').map(lambda s: f' ({s})' if s else '')
                + ' ' + plot_data['label'].map({'PB glomerulus': 'PB', 'FB column': 'FB'}))
 x = np.arange(len(plot_data))
 
 plt.figure(figsize=(max(3, 0.12 * len(x)), 2), dpi=300)
-plt.scatter(x, plot_data['R'], s=6, color='r', label='R', zorder=3)
-plt.errorbar(x, plot_data['R_null_median'],
-             yerr=[plot_data['R_null_median'] - plot_data['R_null_lo'],
-                   plot_data['R_null_hi'] - plot_data['R_null_median']],
+plt.scatter(x, plot_data['tau'], s=6, color='r', label='tau', zorder=3)
+plt.errorbar(x, plot_data['tau_null_median'],
+             yerr=[plot_data['tau_null_median'] - plot_data['tau_null_lo'],
+                   plot_data['tau_null_hi'] - plot_data['tau_null_median']],
              fmt='o', color='k', ecolor='k', elinewidth=0.5, capsize=1,
              label='shuffled (median, 95%)', zorder=2, markersize=2)
 plt.xticks(x, group_names, rotation=90, fontsize=4)
 plt.ylim(0, 1.05)
-plt.ylabel('alignment with\nanatomical order (R)')
+plt.ylabel("Kendall's tau with\nanatomical order")
 plt.legend(fontsize=5, frameon=False)
 plt.tight_layout()
 

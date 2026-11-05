@@ -4,12 +4,11 @@ labels with angles read off an embedding.
 
   anatomical_labels   PB glomerulus, FB column, soma side from instance names
   add_fb_angles       FB column -> angle, columns of a type tiling the circle
-  pca_angles          angle of the embeddings projected onto a reference type's plane
-                      (or the top two PCs of all embeddings)
-                      type (or of all embeddings)
-  alignment           circular alignment R between two sets of angles, allowing a
-                      global rotation, a reflection and a winding factor
-  score_groups        R per cell type (and PB side) with a shuffled-label null
+  pca_angles          angle of the embeddings projected onto the top two PCs of a
+                      reference type (or of all embeddings)
+  order_tau           Kendall's tau between embedding and anatomical order, allowing a
+                      cut and direction of the circle and a winding factor
+  score_groups        tau per cell type (and PB side) with a shuffled-label null
 """
 import re
 import numpy as np
@@ -112,11 +111,11 @@ def add_fb_angles(labels):
 
 def pca_angles(embeddings, data, reference_type=None):
     """
-    Angle of each neuron: project the embeddings onto a reference-optimized plane.
+    Angle of each neuron: project the embeddings onto two directions and take arctan.
 
-    The directions come from utils.projection_directions: solve_shadowmatic2 on the
-    embeddings of reference_type (e.g. 'EPG'), or the top two PCs of all embeddings
-    if reference_type is None. Same arguments as utils.sort_embeddings.
+    The directions (utils.projection_directions) are the top two PCs of the
+    zero-meaned embeddings of reference_type (e.g. 'EPG'), or of all embeddings if
+    reference_type is None. Same arguments as utils.sort_embeddings.
     """
     reference_inds = None if reference_type is None else data.neuron_hash[reference_type]
     projection = projection_directions(embeddings, reference_inds)
@@ -124,37 +123,44 @@ def pca_angles(embeddings, data, reference_type=None):
     return np.arctan2(projected[:, 1], projected[:, 0])
 
 
-def alignment(theta_embedding, theta_anatomy, windings=(1, 0.5, 2)):
+def order_tau(theta_embedding, anatomy_deg, windings=(1, 0.5, 2)):
     """
-    Compare two sets of angles (radians), allowing one global rotation, one
-    reflection, and a winding factor k from windings on the anatomical angles.
+    Kendall's tau between the order of the embedding angles and the anatomical order.
+
+    Allowed freedoms: the embedding angles live on a circle, so the order depends on
+    where the circle is cut and in which direction it is read (best cut and direction
+    are used); and the anatomical angles (degrees) can be scaled by a winding factor k
+    from windings (k * angle, wrapped to 360), best k is used.
+    Pairs of neurons with equal anatomical values are ignored, so neurons at the same
+    anatomical position can be in any order.
 
     Returns:
-        R: circular alignment in [0, 1] (1 = same order up to rotation/reflection)
-        reflected: True if the best match flips the direction of the embedding angles
+        tau: in [0, 1] (1 = same order; ~0.3 for unrelated orders), NaN if every
+            neuron has the same anatomical value
         winding: the k of the best match
-        rotation: the best global rotation (radians)
-        median_error_deg: median absolute angle difference after the best match
     """
-    best = None
+    order = np.argsort(np.asarray(theta_embedding) % (2 * np.pi))
+    anatomy_sorted = np.asarray(anatomy_deg)[order]
+    best_tau, best_k = np.nan, windings[0]
     for k in windings:
-        for sign in [1, -1]:
-            # differences between (possibly reflected) embedding angles and scaled
-            # anatomy; if the orders agree, these all equal the global rotation
-            diff = sign * theta_embedding - k * theta_anatomy
-            mean_vector = np.mean(np.exp(1j * diff))
-            R = np.abs(mean_vector)
-            if best is None or R > best[0]:
-                rotation = np.angle(mean_vector)
-                # remaining error per neuron, wrapped to (-180, 180]
-                error = np.angle(np.exp(1j * (diff - rotation)))
-                best = (R, sign == -1, k, rotation, np.degrees(np.median(np.abs(error))))
-    return best
+        a = np.round(k * anatomy_sorted, 6) % 360
+        sign = np.sign(a[None, :] - a[:, None])   # sign[i, j] = sign(a_j - a_i)
+        n_pairs = np.count_nonzero(sign) / 2
+        if n_pairs == 0:
+            continue
+        # D = concordant - discordant pairs for the cut before neuron 0; moving the
+        # first neuron to the end (moving the cut) changes D by -2 * sum_j sign[0, j]
+        D0 = sign[np.triu_indices(len(a), 1)].sum()
+        D = D0 - 2 * np.concatenate([[0], np.cumsum(sign.sum(1))])
+        tau = np.abs(D).max() / n_pairs
+        if np.isnan(best_tau) or tau > best_tau:
+            best_tau, best_k = tau, k
+    return best_tau, best_k
 
 
-def null_alignment(theta_embedding, theta_anatomy, n_shuffles, rng, windings=(1, 0.5, 2)):
-    """R for each of n_shuffles shuffles of the anatomical labels across neurons."""
-    return np.array([alignment(theta_embedding, rng.permutation(theta_anatomy), windings)[0]
+def null_order_tau(theta_embedding, anatomy_deg, n_shuffles, rng, windings=(1, 0.5, 2)):
+    """order_tau for each of n_shuffles shuffles of the anatomical angles across neurons."""
+    return np.array([order_tau(theta_embedding, rng.permutation(anatomy_deg), windings)[0]
                      for _ in range(n_shuffles)])
 
 
@@ -164,8 +170,10 @@ def score_groups(labels, angle_column, rng, windings=(1, 0.5, 2),
     Score every group of neurons with anatomical labels:
       - PB glomerulus: one group per cell type and PB side
       - FB column:     one group per cell type
-    Returns one row per group. A label kind is skipped if its anatomy column is
-    not in labels (e.g. no fb_angle_deg when add_fb_angles was not called).
+    Returns one row per group, with tau (see order_tau), the winding factor of the
+    best match, and the median and 2.5/97.5th percentiles of tau after shuffling the
+    anatomical labels (NaN if n_shuffles is 0). A label kind is skipped if its anatomy
+    column is not in labels (e.g. no fb_angle_deg when add_fb_angles was not called).
     """
     rows = []
     for label_kind, anatomy_column, group_keys in [
@@ -182,22 +190,22 @@ def score_groups(labels, angle_column, rng, windings=(1, 0.5, 2),
                 continue
 
             theta_embedding = group[angle_column].values
-            theta_anatomy = np.radians(group[anatomy_column].values)
-            R, reflected, winding, _, median_error = alignment(theta_embedding, theta_anatomy, windings)
-
-            null = null_alignment(theta_embedding, theta_anatomy, n_shuffles, rng, windings)
+            anatomy_deg = group[anatomy_column].values
+            tau, winding = order_tau(theta_embedding, anatomy_deg, windings)
+            if n_shuffles > 0:
+                null = null_order_tau(theta_embedding, anatomy_deg, n_shuffles, rng, windings)
+            else:
+                null = np.full(1, np.nan)
             rows.append({
                 'type': keys[0],
                 'pb_side': keys[1] if len(keys) > 1 else None,
                 'label': label_kind,
                 'n_neurons': len(group),
                 'n_positions': n_positions,
-                'R': R,
-                'R_null_median': np.median(null),
-                'R_null_lo': np.percentile(null, 2.5),
-                'R_null_hi': np.percentile(null, 97.5),
-                'median_error_deg': median_error,
-                'reflected': reflected,
+                'tau': tau,
+                'tau_null_median': np.median(null),
+                'tau_null_lo': np.percentile(null, 2.5),
+                'tau_null_hi': np.percentile(null, 97.5),
                 'winding': winding,
             })
     return pd.DataFrame(rows)
