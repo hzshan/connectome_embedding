@@ -300,7 +300,17 @@ def get_inds_by_type(neuronall:pd.DataFrame, type_key:str, types_wanted:list):
     return np.unique(np.concatenate(output))
 
 
-def get_W_all_neuronall_flywire(datapath = ""):
+def get_W_all_neuronall_flywire(datapath = "", connections_file="connections.csv"):
+    """
+    Load FlyWire neuron information and connectivity from the Codex csv files in
+    datapath: neurons.csv, classification.csv, visual_neuron_types.csv and the
+    connections file (connections_file).
+
+    Returns:
+    neuronsall: a pandas dataframe with information about each neuron
+    W_all: sparse connectivity matrix (element i,j is the number of synapses from
+    neuron j to neuron i)
+    """
     neuronsall = pd.read_csv(datapath + "neurons.csv")
     classif = pd.read_csv(datapath + "classification.csv")
     visual_types = pd.read_csv(datapath + "visual_neuron_types.csv")
@@ -308,7 +318,7 @@ def get_W_all_neuronall_flywire(datapath = ""):
     neuronsall = neuronsall.merge(visual_types, on="root_id", how="left")
     neuronsall.rename(columns={'type': "visual_type", 'family':'visual_family',
                             'subsystem':'visual_subsystem'}, inplace=True)
-    conns = pd.read_csv(datapath + "connections.csv")
+    conns = pd.read_csv(datapath + connections_file)
 
     Nall = len(neuronsall)
     idhash = dict(zip(neuronsall.root_id,np.arange(Nall)))
@@ -338,7 +348,7 @@ def prep_connectivity_data_flywire(
 
     # sort neurons into left and right (this is supplied directly in flywire)
     for i in range(N):
-        if split_LR is None or np.sum([t in neurons.type[i] for t in split_LR]) > 0:
+        if split_LR is None or np.sum([t in neurons[type_key][i] for t in split_LR]) > 0:
 
             neuron_side = neurons.side[i]
 
@@ -358,6 +368,39 @@ def prep_connectivity_data_flywire(
 
 
     return J_data
+
+
+def shuffle_within_blocks(J, onehot_types, rng):
+    """
+    Shuffle connection weights within each block of J between a pair of cell types.
+
+    This is for making a null model for the connectivity matrix, where the type-to-type structure
+
+    For every pair of types (a, b), the entries J[i, j] with i of type a and j of
+    type b are randomly permuted among themselves; self-connections (i == j) are
+    left out of the shuffle and stay where they are. This keeps the distribution of
+    weights within each block (so the type-to-type structure) and destroys any
+    structure among the neurons of a type.
+
+    Args:
+        J: N x N array (J[i, j] = synapses from neuron i to neuron j)
+        onehot_types: N x Ntype one-hot array of cell types
+        rng: numpy random Generator
+    Returns:
+        the shuffled N x N array (a copy)
+    """
+    J = np.array(J, copy=True)
+    types = np.asarray(onehot_types).argmax(1)
+    for a in np.unique(types):
+        rows = np.nonzero(types == a)[0]
+        for b in np.unique(types):
+            cols = np.nonzero(types == b)[0]
+            block = J[np.ix_(rows, cols)]
+            # positions to shuffle: all of the block except self-connections
+            not_self = rows[:, None] != cols[None, :]
+            block[not_self] = rng.permutation(block[not_self])
+            J[np.ix_(rows, cols)] = block
+    return J
 
 
 def hemibrain_LR(neuron_name):

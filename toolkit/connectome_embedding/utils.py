@@ -56,17 +56,13 @@ def projection_directions(embeddings, reference_inds=None):
     """
     Two directions (D x 2) to project embeddings onto for reading off angles.
 
-    With reference_inds, the directions come from solve_shadowmatic2 on the
-    centered embeddings of those neurons (e.g. all EPG neurons). Without, they
-    are the top two PCs of all embeddings.
+    The directions are the top two PCs of the zero-meaned embeddings of the neurons
+    in reference_inds (e.g. all EPG neurons), or of all embeddings if
+    reference_inds is None.
     """
-    if reference_inds is None:
-        _, _, V = torch.svd(embeddings - embeddings.mean(0))
-        return V[:, :2]
-    reference = embeddings[reference_inds]
-    reference = reference - reference.mean(0)
-    _, proj, _ = solve_shadowmatic2(reference, nseeds_to_try=50, max_iter=10)
-    return proj
+    reference = embeddings if reference_inds is None else embeddings[reference_inds]
+    _, _, V = torch.svd(reference - reference.mean(0))
+    return V[:, :2]
 
 
 def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
