@@ -3,7 +3,19 @@ import torch, pickle, os, datetime, copy
 import numpy as np
 from connectome_embedding import utils, models, plots, data_utils
 
-CX_LRSPLIT = True  # True: split all CX types into L/R except Delta7; False: no L/R split
+# Which embedding to learn; one of the keys of CONFIGS below:
+#   'central_complex'          all CX types, no L/R split
+#   'central_complex_LR_split' all CX types split into L/R, except Delta7
+#   'whole_hemibrain'          every typed neuron in types with >= 10 neurons
+#   'visual_projection'        LC, LPLC, PVLP, AOTU and DN types (types of any size)
+CONFIG = 'whole_hemibrain'
+
+# If True, the connection weights are shuffled within each block of the
+# connectivity matrix between a pair of cell types before fitting
+# (data_utils.shuffle_within_blocks), as a null: type-to-type structure is kept,
+# structure among the neurons of a type is destroyed. SHUFFLE_SEED sets the shuffle.
+SHUFFLE_WITHIN_BLOCKS = False
+SHUFFLE_SEED = 0
 
 DATAPATH = 'hemibrain_data/'
 
@@ -17,10 +29,10 @@ central_complex_hp = {
     'wrapper_fn': 'softplus',
     'embedding_regularizer': 0.01,
     'lr': 0.05,
-    'steps': 20000,
+    'steps': 10000,
     'loss_type': 'poisson',
     'split_LR': [],  # do not split any cell type into L/R
-    'fit_rotations': True,
+    'fit_rotations': False,
     'rotation_steps': 500,
     'rotation_regularizer': 1000.,
     'translation_regularizer': 1.,
@@ -34,11 +46,40 @@ central_complex_hp = {
 central_complex_split_hp = copy.deepcopy(central_complex_hp)
 central_complex_split_hp['split_LR'] = [
     t.strip('=*') for t in central_complex_hp['types_wanted'] if t != 'Delta7']
+central_complex_split_hp['fit_rotations'] = True
 central_complex_split_hp['embedding_regularizer'] = 1.0
 central_complex_split_hp['save_filename'] = 'CX_LRsplit_embedding.pkl'
 
-hp = central_complex_split_hp if CX_LRSPLIT else central_complex_hp
-print(hp)
+# Reproduces Learned_embeddings/embedding_Allhemibrain_D5_09262025.pkl
+# types_wanted=None keeps every neuron with a type name (untyped neurons are
+# dropped) in types with at least min_num_per_type neurons: 7898 neurons, 168 types.
+whole_hemibrain_hp = copy.deepcopy(central_complex_hp)
+whole_hemibrain_hp['types_wanted'] = None
+whole_hemibrain_hp['save_filename'] = 'whole_hemibrain_embedding.pkl'
+
+# Reproduces Learned_embeddings/embedding_LC_PVLP_DN_D5_11142025.pkl
+# Visual projection neurons and their partners; types of every size are kept
+# (min_num_per_type=1): 2894 neurons, 321 types.
+visual_projection_hp = copy.deepcopy(central_complex_hp)
+visual_projection_hp['types_wanted'] = ['LC*', 'PVLP*', 'DN*', 'AOTU*', 'LPLC*']
+visual_projection_hp['min_num_per_type'] = 1
+visual_projection_hp['embedding_regularizer'] = 0.001
+visual_projection_hp['lr'] = 0.02
+visual_projection_hp['save_filename'] = 'visual_projection_embedding.pkl'
+
+CONFIGS = {
+    'central_complex': central_complex_hp,
+    'central_complex_LR_split': central_complex_split_hp,
+    'whole_hemibrain': whole_hemibrain_hp,
+    'visual_projection': visual_projection_hp,
+}
+hp = copy.deepcopy(CONFIGS[CONFIG])
+hp['shuffle_within_blocks'] = SHUFFLE_WITHIN_BLOCKS
+if SHUFFLE_WITHIN_BLOCKS:
+    hp['shuffle_seed'] = SHUFFLE_SEED
+    hp['save_filename'] = hp['save_filename'].replace(
+        '.pkl', f'_block_shuffled_seed{SHUFFLE_SEED}.pkl')
+print(CONFIG, hp)
 
 assert 'traced-neurons.csv' in os.listdir(DATAPATH), "Please download the hemibrain data from https://neuprint.janelia.org/?dataset=hemibrain:v1.2.1 and place it in the DATAPATH folder."
 assert 'traced-total-connections.csv' in os.listdir(DATAPATH), "Please download the hemibrain data from https://neuprint.janelia.org/?dataset=hemibrain:v1.2.1 and place it in the DATAPATH folder."
@@ -50,6 +91,12 @@ W_all, neuronsall = data_utils.get_W_all_neuronall(
 data = data_utils.prep_connectivity_data(
     W_all, neuronsall, hp['types_wanted'], split_LR=hp['split_LR'])
 print(f'{data.N} neurons, {data.Ntype} types')
+
+if hp['shuffle_within_blocks']:
+    shuffled_J = data_utils.shuffle_within_blocks(
+        data.J.numpy(), data.onehot_types.numpy(), np.random.default_rng(hp['shuffle_seed']))
+    data.J = torch.tensor(shuffled_J, dtype=data.J.dtype)
+    print(f"Shuffled weights within blocks (seed {hp['shuffle_seed']})")
 
 #%%
 torch.manual_seed(hp['seed'])
@@ -94,7 +141,7 @@ results_to_save['time'] = datetime.datetime.now()
 results_to_save['model'] = model
 results_to_save['data'] = data
 results_to_save['hyperparams'] = hp
-results_to_save['losses'] = losses
+# results_to_save['losses'] = losses
 if hp['fit_rotations']:
     results_to_save['losses_rotations'] = losses2
 results_to_save['save_filename'] = hp['save_filename']
