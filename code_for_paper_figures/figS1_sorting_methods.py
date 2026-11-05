@@ -15,8 +15,8 @@ J >= threshold (synapse counts), for several thresholds:
 
 Each ordering is plotted as a sorted matrix and scored against the EPG neurons' PB
 glomeruli: neuron k of n in the ordering is placed at angle 2 pi k / n, and the
-angles are compared with anatomy as in anatomical_order.py (circular alignment R
-per PB side, with a shuffled-label null).
+angles are compared with anatomy as in anatomical_order.py (Kendall's tau per PB
+side, with a shuffled-label null).
 
 Run from code_for_paper_figures/.
 """
@@ -105,7 +105,7 @@ for threshold in THRESHOLDS:
         score_rows.append(scores.assign(method=method, threshold=threshold))
 
 scores = pd.concat(score_rows, ignore_index=True)
-print(scores[['method', 'threshold', 'type', 'pb_side', 'R', 'R_null_median', 'R_null_hi']]
+print(scores[['method', 'threshold', 'type', 'pb_side', 'tau', 'tau_null_median', 'tau_null_hi']]
       .to_string(index=False))
 
 #%% Plot: sorted binarized matrices, one row per method, one column per threshold
@@ -126,18 +126,18 @@ for i, method in enumerate(METHODS):
             ax.set_ylabel(method, fontsize=5)
 plt.tight_layout()
 
-#%% Plot: alignment with PB order for each method and threshold
+#%% Plot: Kendall's tau with PB order for each method and threshold
 plt.figure(figsize=(2.2, 1.5), dpi=300)
 for k, method in enumerate(METHODS):
     sub = scores[scores['method'] == method]
     x = np.array([THRESHOLDS.index(t) for t in sub['threshold']]) + (k - 1) * 0.2
-    plt.scatter(x, sub['R'], s=4, label=method, zorder=3)
-null = scores.groupby('threshold')['R_null_hi'].max()
+    plt.scatter(x, sub['tau'], s=4, label=method, zorder=3)
+null = scores.groupby('threshold')['tau_null_hi'].max()
 plt.plot(range(len(THRESHOLDS)), null.values, color='gray', lw=0.5,
          label='shuffled, 97.5th pct.')
 plt.xticks(range(len(THRESHOLDS)), [f'>= {t}' for t in THRESHOLDS])
 plt.xlabel('synapses per connection')
-plt.ylabel('alignment with\nPB order (R)')
+plt.ylabel("Kendall's tau with\nPB order")
 plt.ylim(0, 1.05)
 plt.legend(fontsize=4, frameon=False)
 plt.tight_layout()
