@@ -40,6 +40,16 @@ class Model:
         self.wrapper_fn_choice = wrapper_fn
 
 
+    def expand_type_pairs(self, X):
+        """
+        Ntype x Ntype matrix of per-type-pair values -> N x N matrix whose (i, j)
+        entry is X[type of i, type of j]. Same as onehot @ X @ onehot.T, done by
+        indexing.
+        """
+        types = self.onehot_types.argmax(1)
+        return X[types][:, types]
+
+
     def wrapper_fn(self, x):
         """A nonlinear function to keep the predicted synaptic number positive."""
         if self.wrapper_fn_choice == 'exp':
@@ -57,9 +67,9 @@ class Model:
 
         eps_dist = 0.01
 
-        scaling = self.onehot_types @ self.A @ self.onehot_types.T
-        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
-        bias = self.onehot_types @ self.B @ self.onehot_types.T
+        scaling = self.expand_type_pairs(self.A)
+        covar = self.expand_type_pairs(self.C**2 + eps_dist)
+        bias = self.expand_type_pairs(self.B)
 
         content = scaling * torch.exp(-torch.cdist(
             self.embeddings, self.embeddings)**2 / covar) + bias
@@ -159,9 +169,9 @@ class SourceTargetModel(Model):
         """
         eps_dist = 0.01
 
-        scaling = self.onehot_types @ self.A @ self.onehot_types.T
-        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
-        bias = self.onehot_types @ self.B @ self.onehot_types.T
+        scaling = self.expand_type_pairs(self.A)
+        covar = self.expand_type_pairs(self.C**2 + eps_dist)
+        bias = self.expand_type_pairs(self.B)
 
         dist_sq = torch.cdist(self.source_embeddings,
                               self.target_embeddings)**2
@@ -239,6 +249,9 @@ class InteractionModel(Model):
         return utils.make_rotation_mats(self.rotation_params)
 
 
+    # runs uncompiled inside train_model(compile=True): the loop over types
+    # does not compile
+    @torch.compiler.disable
     def get_dist_mat_with_transforms(self):
         """
         Squared distance between every source neuron i and target neuron j,
@@ -314,9 +327,9 @@ class InteractionModel(Model):
         """
         eps_dist = 0.01
 
-        scaling = self.onehot_types @ self.A @ self.onehot_types.T
-        covar = self.onehot_types @ (self.C**2 + eps_dist) @ self.onehot_types.T
-        bias = self.onehot_types @ self.B @ self.onehot_types.T
+        scaling = self.expand_type_pairs(self.A)
+        covar = self.expand_type_pairs(self.C**2 + eps_dist)
+        bias = self.expand_type_pairs(self.B)
 
         # emb_sum = torch.sum(source_emb**2, 1, keepdim=True)
         # target_sum = torch.sum(target_emb**2, 1, keepdim=True)
@@ -349,34 +362,78 @@ class InteractionModel(Model):
 
         return self.wrapper_fn(content)
 
+def masked_loss(preds, target_mat, mask, loss_type):
+    """
+    Mean loss over the entries of target_mat where mask is 1.
+    poisson: Poisson negative log-likelihood up to a constant,
+        preds - target * log(preds + 1e-8) (as torch.nn.PoissonNLLLoss with
+        log_input=False).
+    mse: squared error weighted by 1 / (1 + target^2).
+    """
+    if loss_type == 'poisson':
+        elementwise = preds - target_mat * torch.log(preds + 1e-8)
+    else:
+        assert loss_type == 'mse'
+        elementwise = (preds - target_mat)**2 / (1 + target_mat**2)
+    # summed in float64: a float32 sum over N^2 entries loses precision for large N
+    return ((elementwise * mask).sum(dtype=torch.float64) / mask.sum()).float()
+
+
 def train_model(model, target_mat,
                 loss_type='poisson', lr=0.01, steps=40000,
-                print_every=2000, reg_fn=None, train_mask=None, test_mask=None):
+                print_every=2000, reg_fn=None, train_mask=None, test_mask=None,
+                compile=True):
     """
-    Train an embedding model to fit the connectivity matrix.
+    Train an embedding model to fit the connectivity matrix with Adam.
 
+    Args:
+    model: a Model; its pred_synapses() returns the N x N predicted means
+    target_mat: N x N tensor of synapse counts
+    loss_type: 'poisson' or 'mse' (see masked_loss)
+    reg_fn: optional function of the model, added to the loss
+    train_mask: N x N boolean array, entries used for the loss. Default: all
+        off-diagonal entries.
+    test_mask: N x N boolean array; if given, the loss on these entries is
+        printed every print_every steps.
+    compile: compile the loss computation with torch.compile, which fuses the
+        operations on N x N matrices (several times faster for large N; the
+        first step takes longer while it compiles). Falls back to uncompiled
+        if compilation fails.
+
+    Returns: losses (training loss without reg_fn, per step),
+    norms of the embeddings per step, and an array of zeros (unused).
     """
-
-    # only compute loss on off-diagonal elements of J
     _N = target_mat.shape[0]
+    target_mat = torch.as_tensor(target_mat, dtype=torch.float32)
 
     if train_mask is None:
-        train_inds = np.where((np.ones([_N, _N]) - np.diag(np.ones(_N))).flatten())[0]
+        train_mask = ~np.eye(_N, dtype=bool)
     else:
         assert train_mask.shape == target_mat.shape
         assert train_mask.dtype == bool
-        train_inds = np.where(train_mask.flatten())[0]
-    
-    y_train = target_mat.flatten()[train_inds]
-
+    train_mask = torch.as_tensor(train_mask, dtype=torch.float32)
 
     if test_mask is not None:
         assert test_mask.shape == target_mat.shape
         assert test_mask.dtype == bool
-        test_inds = np.where(test_mask.flatten())[0]
-        y_test = target_mat.flatten()[test_inds]
-    else:
-        y_test = None
+        test_mask = torch.as_tensor(test_mask, dtype=torch.float32)
+
+    def total_loss():
+        preds = model.pred_synapses()
+        loss = masked_loss(preds, target_mat, train_mask, loss_type)
+        tot_loss = loss + reg_fn(model) if reg_fn is not None else loss
+        return tot_loss, loss, preds
+
+    loss_fn = total_loss
+    if compile:
+        try:
+            # compile the forward and backward passes now, so that a failure
+            # falls back to uncompiled training here
+            compiled = torch.compile(total_loss)
+            compiled()[0].backward()
+            loss_fn = compiled
+        except Exception as err:
+            print(f'torch.compile failed, training uncompiled: {type(err).__name__}')
 
     optim = torch.optim.Adam(params=model.params, lr=lr)
 
@@ -384,71 +441,29 @@ def train_model(model, target_mat,
     embedding_norms = np.zeros(steps)
     rotation_norms = np.zeros(steps)
 
-    poisson_loss = torch.nn.PoissonNLLLoss(log_input=False)
-
-
     for i in tqdm.trange(steps):
         optim.zero_grad()
+        tot_loss, loss, preds = loss_fn()
 
-        flat_preds = model.pred_synapses().flatten()
-
-        # check inf
-        if torch.isinf(flat_preds[train_inds]).any():
-            raise ValueError('preds are inf')
-        if torch.isnan(flat_preds[train_inds]).any():
-            raise ValueError('preds are nan')
-
-        if loss_type == 'poisson':
-            loss = poisson_loss(flat_preds[train_inds], y_train)
-        else:
-            assert loss_type == 'mse'
-            # loss = -torch.dot(2 * torch.sigmoid(flat_preds[train_inds])-1, y_train) -\
-            #       torch.dot(2-2*torch.sigmoid(flat_preds[train_inds]), 1 - y_train)
-            # torch.binary_cross_entropy_with_logits(
-            #     , reduction=1)
-            # loss = torch.norm(flat_preds[train_inds] - y_train)**2
-            loss = torch.mean((flat_preds[train_inds] - y_train)**2 / (1 + (y_train)**2))
-            # loss = torch.sum((torch.log(flat_preds[train_inds] + 1e-1) - torch.log(y_train + 1e-1))**2)
-
-
-        if reg_fn is not None:
-            tot_loss = loss + reg_fn(model)
-        else:
-            tot_loss = loss
+        # a non-finite prediction makes the loss non-finite
+        if not torch.isfinite(tot_loss):
+            raise ValueError(f'loss is {tot_loss.item()} at step {i}')
 
         tot_loss.backward()
-
-        if torch.isnan(tot_loss):
-            raise ValueError('loss is nan')
-    
-        for p in model.params:
-            if p.grad is not None:
-                if torch.isnan(p.grad).any():
-                    print(loss, tot_loss, torch.isnan(flat_preds[train_inds]).any())
-                    raise ValueError('param grad {} is nan'.format(p.grad))
-                if torch.isinf(p.grad).any():
-                    raise ValueError('param grad {} is inf'.format(p.grad))
         optim.step()
-        for p in model.params:
-            if torch.isnan(p).any():
-                raise ValueError('param {} is nan'.format(p))
-            if torch.isinf(p).any():
-                raise ValueError('param {} is inf'.format(p))
 
-        losses[i] = loss.detach().numpy()
-        embedding_norms[i] = torch.norm(model.embeddings).detach().numpy()
-
-        # if model.rotation_params is not None:
-        #     rotation_norms[i] = torch.norm(model.rotation_params).detach().numpy()
-
-        # if loss_type == 'mse':
-        #     losses[i] /= (torch.norm(y_train)**2).numpy()
+        losses[i] = loss.item()
+        embedding_norms[i] = torch.norm(model.embeddings).item()
 
         if (i+1) % print_every == 0:
+            for p in model.params:
+                if not torch.isfinite(p).all():
+                    raise ValueError(f'non-finite parameter at step {i}')
             print(i, f'normalized loss: {losses[i]:.4f}',
-                f'avg sq embed norm: {torch.norm(model.embeddings).detach().numpy()**3 / _N:.2f}')
-            if y_test is not None:
-                test_loss = poisson_loss(flat_preds[test_inds], y_test)
+                f'avg sq embed norm: {embedding_norms[i]**3 / _N:.2f}')
+            if test_mask is not None:
+                with torch.no_grad():
+                    test_loss = masked_loss(preds, target_mat, test_mask, loss_type)
                 print(f'test loss: {test_loss:.4f}')
-    
+
     return losses, embedding_norms, rotation_norms

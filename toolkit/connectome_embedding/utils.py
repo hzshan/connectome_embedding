@@ -16,7 +16,31 @@ def make_rotation_mats(rotation_params):
     """
     anti_sym = rotation_params - rotation_params.transpose(-1, -2)
 
-    return torch.matrix_exp(anti_sym)
+    return matrix_exp_batched(anti_sym)
+
+
+def matrix_exp_batched(X, order=12):
+    """
+    Matrix exponential of a batch of small matrices X (..., D, D), by scaling and
+    squaring: exp(X) = exp(X / 2^s)^(2^s), with exp(X / 2^s) from its Taylor
+    series to `order` terms, where s makes the 1-norm of X / 2^s at most 0.5.
+    Agrees with torch.matrix_exp to float32 precision; built from batched
+    matrix products, so its gradient is much faster to compute than that of
+    torch.matrix_exp for many small matrices.
+    """
+    max_norm = torch.linalg.matrix_norm(X.detach(), ord=1).max().item() if X.numel() else 0.
+    s = max(0, int(np.ceil(np.log2(max_norm / 0.5)))) if max_norm > 0 else 0
+    X_scaled = X / 2**s
+
+    eye = torch.eye(X.shape[-1], dtype=X.dtype, device=X.device).expand_as(X)
+    result = eye
+    term = eye
+    for k in range(1, order + 1):
+        term = term @ X_scaled / k
+        result = result + term
+    for _ in range(s):
+        result = result @ result
+    return result
 
 
 def make_circle(n_points, wrap=False):
