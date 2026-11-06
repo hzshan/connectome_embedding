@@ -11,7 +11,7 @@ there on why that is conservative).
 
 Run from code_for_paper_figures/. Saves the null to SAVE_NAME.
 """
-import pickle, datetime
+import os, pickle, datetime
 import numpy as np
 import torch
 import tqdm
@@ -31,7 +31,8 @@ CIRCLE_SEARCH = {'nseeds_to_try': 50, 'max_iter': 10}
 # Larger types reuse the MAX_N null in fig4_circle_screen.py.
 MAX_N = 149
 
-SAVE_NAME = f'circle_null_random_points_D{D}.pkl'
+RESULTS_DIR = 'results/'
+SAVE_NAME = f'{RESULTS_DIR}circle_null_random_points_D{D}.pkl'
 
 results = {
     'D': D,
@@ -60,6 +61,7 @@ for N in tqdm.tqdm(range(1, MAX_N + 1)):
     results['scores'][N] = scores
 
 results['time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+os.makedirs(RESULTS_DIR, exist_ok=True)
 pickle.dump(results, open(SAVE_NAME, 'wb'))
 
 print(f'Saved {SAVE_NAME}')
