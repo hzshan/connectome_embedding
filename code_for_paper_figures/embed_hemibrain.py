@@ -18,6 +18,7 @@ SHUFFLE_WITHIN_BLOCKS = False
 SHUFFLE_SEED = 0
 
 DATAPATH = 'hemibrain_data/'
+EMBEDDING_DIR = 'embeddings/'   # the fitted embedding is saved here
 
 # Reproduces Learned_embeddings/embedding_AllCX_D5_09232025.pkl
 central_complex_hp = {
@@ -145,7 +146,9 @@ results_to_save['hyperparams'] = hp
 if hp['fit_rotations']:
     results_to_save['losses_rotations'] = losses2
 results_to_save['save_filename'] = hp['save_filename']
-if os.path.isfile(hp['save_filename']):
-    raise ValueError(f"{hp['save_filename']} already exists. Please delete it first.")
-print(hp['save_filename'])
-pickle.dump(results_to_save, open(hp['save_filename'], 'wb'))
+save_path = os.path.join(EMBEDDING_DIR, hp['save_filename'])
+if os.path.isfile(save_path):
+    raise ValueError(f"{save_path} already exists. Please delete it first.")
+os.makedirs(EMBEDDING_DIR, exist_ok=True)
+print(save_path)
+pickle.dump(results_to_save, open(save_path, 'wb'))

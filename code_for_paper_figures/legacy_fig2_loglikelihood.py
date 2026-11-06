@@ -11,7 +11,7 @@ plots.set_rc_params()
 # embedding_name = 'Learned_embeddings/embedding_AllHemibrain_D5_noLRsplit_022525.pkl
 # embedding_name = 'Learned_embeddings/embedding_Allhemibrain_D5_04172025.pkl'
 # embedding_name = '../Learned_embeddings/embedding_AllCX_D5_noLRsplit_030625.pkl'
-embedding_name = 'CX_embedding.pkl'
+embedding_name = 'embeddings/CX_embedding.pkl'
 model_and_data = pickle.load(open(embedding_name, 'rb'))
 model = model_and_data['model']
 data = model_and_data['data']

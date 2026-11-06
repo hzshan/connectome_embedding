@@ -9,7 +9,7 @@ import pickle
 
 plots.set_rc_params()
 
-embedding_name = '../Learned_embeddings/embedding_AllCX_D5_LRsplit_woDelta7_031225.pkl'
+embedding_name = 'embeddings/embedding_AllCX_D5_LRsplit_woDelta7_031225.pkl'
 model_and_data = pickle.load(open(embedding_name, 'rb'))
 model = model_and_data['model']
 data = model_and_data['data']

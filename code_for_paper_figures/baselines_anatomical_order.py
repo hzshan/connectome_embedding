@@ -46,7 +46,7 @@ from connectome_embedding import plots, anatomy
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-EMBEDDING_NAME = 'whole_hemibrain_embedding.pkl'   # embedding model; its data (J, neurons) is used for all methods
+EMBEDDING_NAME = 'embeddings/whole_hemibrain_embedding.pkl'   # embedding model; its data (J, neurons) is used for all methods
 
 # the sorting angle projects all embeddings on the top two PCs of this type's embeddings
 REFERENCE_TYPE = 'EPG'

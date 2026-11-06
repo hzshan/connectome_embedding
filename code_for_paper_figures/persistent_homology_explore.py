@@ -30,7 +30,7 @@ plots.set_rc_params()
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-EMBEDDING_NAME = '../Learned_embeddings/embedding_Allhemibrain_D5_09262025.pkl'
+EMBEDDING_NAME = 'embeddings/embedding_Allhemibrain_D5_09262025.pkl'
 
 MIN_NEURONS = 15     # skip types with fewer neurons (too few for H1/H2)
 MAX_POINTS = 300     # subsample larger types to keep ripser fast

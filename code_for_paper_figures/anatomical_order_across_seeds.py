@@ -23,7 +23,7 @@ plots.set_rc_params()
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-SAVE_DIR = 'fig2_embeddings'          # where fig2_model_hyperparam_comparison.py saves its fits
+SAVE_DIR = 'embeddings/fig2_model_hyperparam_comparison'   # where fig2_model_hyperparam_comparison.py saves its fits
 MODEL_KIND = 'with_types'
 DS = [3, 5, 7, 9]
 SEEDS = [0, 1, 2, 3, 4, 5]

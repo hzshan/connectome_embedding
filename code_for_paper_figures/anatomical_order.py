@@ -50,8 +50,7 @@ reported, together with the null distribution of tau (anatomical labels shuffled
 within the group, with the same maximization): its median and 2.5th/97.5th
 percentiles. The null is not centered at 0, especially for small groups.
 
-Run from code_for_paper_figures/. Saves a CSV of per-neuron labels and angles and a
-CSV of per-type scores, and plots the scores.
+Run from code_for_paper_figures/. Plots the scores.
 """
 import pickle
 import numpy as np
@@ -62,7 +61,7 @@ from connectome_embedding import plots, anatomy
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-EMBEDDING_NAME = 'CX_embedding.pkl'
+EMBEDDING_NAME = 'embeddings/flywire_CX_cave_embedding.pkl'
 
 # Reference cell type: all embeddings are projected on the top two PCs of its embeddings
 REFERENCE_TYPE = 'EPG'
@@ -83,10 +82,6 @@ MIN_POSITIONS = 3
 
 # Shuffles of the anatomical labels used to estimate the null distribution of tau
 N_SHUFFLES = 1000
-
-embedding_tag = EMBEDDING_NAME.split('/')[-1].replace('.pkl', '')
-LABELS_SAVE_NAME = f'anatomical_order_neurons_{embedding_tag}.csv'
-SCORES_SAVE_NAME = f'anatomical_order_scores_{embedding_tag}.csv'
 
 
 #%% Load the embedding and its neuron info
@@ -141,7 +136,3 @@ plt.ylabel("Kendall's tau with\nanatomical order")
 plt.legend(fontsize=5, frameon=False)
 plt.tight_layout()
 
-#%% Save
-labels.to_csv(LABELS_SAVE_NAME, index=False)
-scores.to_csv(SCORES_SAVE_NAME, index=False)
-print(f'Saved {LABELS_SAVE_NAME} and {SCORES_SAVE_NAME}')

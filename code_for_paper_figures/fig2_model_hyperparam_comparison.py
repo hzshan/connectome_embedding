@@ -67,7 +67,7 @@ TRAINING = {
     'modifier_regularizer': 0.01,   # source_target only: penalty on the target modifier m
 }
 
-SAVE_DIR = 'fig2_embeddings'                 # one pickle per fitted embedding
+SAVE_DIR = 'embeddings/fig2_model_hyperparam_comparison'   # one pickle per fitted embedding
 
 
 def embedding_filename(D, seed, model_kind):

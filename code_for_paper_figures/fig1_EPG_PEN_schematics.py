@@ -8,9 +8,9 @@ from connectome_embedding import plots
 
 plots.set_rc_params()
 
-embedding_name = '../Learned_embeddings/' + \
+embedding_name = 'embeddings/' + \
 'embedding_AllCX_D5_LRsplit_woDelta7_031225.pkl'
-# embedding_name = 'Learned_embeddings/embedding_AllCX_D5_noLRsplit_030625.pkl'
+# embedding_name = 'embeddings/embedding_AllCX_D5_noLRsplit_030625.pkl'
 model_and_data = pickle.load(open(embedding_name, 'rb'))
 model = model_and_data['model']
 data = model_and_data['data']
