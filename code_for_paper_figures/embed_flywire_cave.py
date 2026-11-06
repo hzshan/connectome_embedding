@@ -1,16 +1,16 @@
 #%%
 """
 Learn an embedding of the central complex (CX) in the FlyWire connectome, with the
-data pulled directly from FlyWire's CAVE servers using CAVEclient (instead of the
-Codex csv files used by embed_flywire.py).
+data pulled directly from FlyWire's CAVE servers using CAVEclient.
 
 Neurons: from FlyWire's public annotation file (flyconnectome/flywire_annotations),
 mapped to v783 root ids with CAVE; cell class 'CX' and a hemibrain_type with at least
-min_num_per_type neurons, restricted to the same CX types as embed_flywire.py.
+min_num_per_type neurons, restricted to the same CX types as the 'central_complex'
+config of embed_hemibrain.py. Cell types are FlyWire's hemibrain_type.
 Connectivity: synapses between those neurons from the filtered synapse view
 (valid_synapses_nt_np_v6), counted per (pre, post) neuron pair.
 
-Training and the saved format are the same as embed_flywire.py.
+Training and the saved format are the same as embed_hemibrain.py.
 
 Setup (once): pip install caveclient, then get a token with
     from caveclient import CAVEclient
