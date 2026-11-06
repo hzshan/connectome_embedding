@@ -436,3 +436,34 @@ def hemibrain_LR(neuron_name):
         return '_R'
     
     return ''
+
+
+# How well a per-type score separates one group of cell types from another.
+
+def types_matching(types, patterns):
+    """Cell types (from types) matching any of the patterns, with the rules of get_inds_by_type."""
+    table = pd.DataFrame({'type': list(types)})
+    inds = get_inds_by_type(table, 'type', patterns)
+    return set(table['type'].iloc[inds])
+
+
+def auc(scores_positive, scores_negative):
+    """Area under the ROC curve: probability that a positive scores above a negative (ties count half)."""
+    pos = np.asarray(scores_positive)[:, None]
+    neg = np.asarray(scores_negative)[None, :]
+    return np.mean((pos > neg) + 0.5 * (pos == neg))
+
+
+def auc_with_ci(scores_positive, scores_negative, n_bootstrap, rng):
+    """AUC and a 95% bootstrap interval (resampling positives and negatives separately)."""
+    pos, neg = np.asarray(scores_positive), np.asarray(scores_negative)
+    boot = [auc(rng.choice(pos, len(pos)), rng.choice(neg, len(neg))) for _ in range(n_bootstrap)]
+    return auc(pos, neg), np.percentile(boot, 2.5), np.percentile(boot, 97.5)
+
+
+def roc_curve(scores_positive, scores_negative):
+    """False and true positive rates as the threshold sweeps from high to low."""
+    thresholds = np.sort(np.unique(np.concatenate([scores_positive, scores_negative])))[::-1]
+    tpr = [np.mean(np.asarray(scores_positive) >= t) for t in thresholds]
+    fpr = [np.mean(np.asarray(scores_negative) >= t) for t in thresholds]
+    return np.r_[0, fpr], np.r_[0, tpr]

@@ -49,8 +49,9 @@ CX_TYPES = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
 # CX types that tile the PB or FB (columnar), where a ring is expected
 CX_COLUMNAR_TYPES = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
                      'hDelta', 'vDelta', 'FR*', 'FS', 'PFG', 'PFR', 'IbSpsP']
-# head-direction inputs outside the CX proper, reported separately
-HD_INPUT_TYPES = ['ER*', 'ExR*', 'TuBu*']
+# ring neurons (EB tangential neurons that synapse onto EPG) and the TuBu neurons
+# upstream of them; not columnar, reported separately
+RING_AND_TUBU_TYPES = ['ER*', 'TuBu*']
 N_BOOTSTRAP = 1000
 
 #%% Load the embedding
@@ -164,46 +165,17 @@ plt.tight_layout()
 
 
 #%% How well does H1 pick out central complex types?
-def types_matching(types, patterns):
-    """Cell types (from types) matching any of the patterns, with the rules of data_utils.get_inds_by_type."""
-    table = pd.DataFrame({'type': list(types)})
-    inds = data_utils.get_inds_by_type(table, 'type', patterns)
-    return set(table['type'].iloc[inds])
-
-
-def auc(scores_positive, scores_negative):
-    """Area under the ROC curve: probability that a positive scores above a negative (ties count half)."""
-    pos = np.asarray(scores_positive)[:, None]
-    neg = np.asarray(scores_negative)[None, :]
-    return np.mean((pos > neg) + 0.5 * (pos == neg))
-
-
-def auc_with_ci(scores_positive, scores_negative, n_bootstrap, rng):
-    """AUC and a 95% bootstrap interval (resampling positives and negatives separately)."""
-    pos, neg = np.asarray(scores_positive), np.asarray(scores_negative)
-    boot = [auc(rng.choice(pos, len(pos)), rng.choice(neg, len(neg))) for _ in range(n_bootstrap)]
-    return auc(pos, neg), np.percentile(boot, 2.5), np.percentile(boot, 97.5)
-
-
-def roc_curve(scores_positive, scores_negative):
-    """False and true positive rates as the threshold sweeps from high to low."""
-    thresholds = np.sort(np.unique(np.concatenate([scores_positive, scores_negative])))[::-1]
-    tpr = [np.mean(np.asarray(scores_positive) >= t) for t in thresholds]
-    fpr = [np.mean(np.asarray(scores_negative) >= t) for t in thresholds]
-    return np.r_[0, fpr], np.r_[0, tpr]
-
-
-cx = types_matching(results['type'], CX_TYPES)
-cx_columnar = types_matching(results['type'], CX_COLUMNAR_TYPES)
-hd_inputs = types_matching(results['type'], HD_INPUT_TYPES) - cx
+cx = data_utils.types_matching(results['type'], CX_TYPES)
+cx_columnar = data_utils.types_matching(results['type'], CX_COLUMNAR_TYPES)
+ring_and_tubu = data_utils.types_matching(results['type'], RING_AND_TUBU_TYPES) - cx
 
 def group_of(t):
     if t in cx_columnar:
         return 'CX columnar'
     if t in cx:
         return 'CX other'
-    if t in hd_inputs:
-        return 'ER / ExR / TuBu'
+    if t in ring_and_tubu:
+        return 'ring / TuBu'
     return 'other'
 
 results['group'] = results['type'].map(group_of)
@@ -212,7 +184,7 @@ results['h1_relative'] = results['h1_1st'] / results['h1_null_95']
 print(results['group'].value_counts())
 
 # AUC for two choices of positives, with all non-CX types as negatives
-# (ER / ExR / TuBu count as negatives here; their scores are listed below)
+# (ring / TuBu count as negatives here; their scores are listed below)
 rng = np.random.default_rng(SEED)
 comparisons = {
     'all CX vs non-CX': (results['group'].isin(['CX columnar', 'CX other']),
@@ -223,7 +195,7 @@ comparisons = {
 auc_rows = []
 for name, (pos_mask, neg_mask) in comparisons.items():
     for score in ['h1_1st', 'h1_relative']:
-        value, lo, hi = auc_with_ci(results.loc[pos_mask, score], results.loc[neg_mask, score],
+        value, lo, hi = data_utils.auc_with_ci(results.loc[pos_mask, score], results.loc[neg_mask, score],
                                     N_BOOTSTRAP, rng)
         auc_rows.append({'comparison': name, 'score': score, 'AUC': value, 'lo': lo, 'hi': hi,
                          'n_positive': pos_mask.sum(), 'n_negative': neg_mask.sum()})
@@ -243,7 +215,7 @@ print(results[(results['group'] == 'CX columnar') & (results['h1_relative'] <= 1
 #%% Plot: ROC curves (H1 relative to the null)
 plt.figure(figsize=(1.8, 1.8), dpi=300)
 for (name, (pos_mask, neg_mask)), color in zip(comparisons.items(), ['k', 'r']):
-    fpr, tpr = roc_curve(results.loc[pos_mask, 'h1_relative'].values,
+    fpr, tpr = data_utils.roc_curve(results.loc[pos_mask, 'h1_relative'].values,
                          results.loc[neg_mask, 'h1_relative'].values)
     value = auc_table[(auc_table['comparison'] == name) & (auc_table['score'] == 'h1_relative')]['AUC'].item()
     plt.plot(fpr, tpr, color=color, lw=1, label=f'{name} (AUC {value:.2f})')
@@ -255,7 +227,7 @@ plt.gca().set_aspect('equal')
 plt.tight_layout()
 
 #%% Plot: H1 relative to the null, by group
-groups = ['CX columnar', 'CX other', 'ER / ExR / TuBu', 'other']
+groups = ['CX columnar', 'CX other', 'ring / TuBu', 'other']
 plt.figure(figsize=(2, 1.8), dpi=300)
 for i, g in enumerate(groups):
     vals = results.loc[results['group'] == g, 'h1_relative'].values
