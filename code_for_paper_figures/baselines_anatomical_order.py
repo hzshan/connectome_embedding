@@ -33,8 +33,7 @@ of each cell type's rows of the eigenvectors. For the embedding model, the angle
 used for sorting in the figures (all embeddings projected on the top two principal
 components of the REFERENCE_TYPE embeddings, as in anatomical_order.py).
 
-Run from code_for_paper_figures/. Saves a CSV of scores (one row per method,
-features and group) and plots tau for each method.
+Run from code_for_paper_figures/. Plots tau for each method.
 """
 import pickle
 import numpy as np
@@ -76,8 +75,6 @@ SCOPE_COLORS = {'all neurons at once': 'tab:blue', 'one cell type at a time': 'k
 
 # Cell types whose dots are labelled in the dot plot
 LABELLED_TYPES = ('PEG',)
-
-SAVE_NAME = 'baselines_anatomical_order_scores.csv'
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +230,6 @@ scores = pd.concat(
     ignore_index=True)
 scores['above_null'] = scores['tau'] > scores['tau_null_hi'] if N_SHUFFLES > 0 else np.nan
 scores['scope'] = scores['method'].map(scope_of)
-scores.to_csv(SAVE_NAME, index=False)
-print(f'Saved {SAVE_NAME}')
 
 summary = scores.groupby(['method', 'features']).agg(
     median_tau=('tau', 'median'),
