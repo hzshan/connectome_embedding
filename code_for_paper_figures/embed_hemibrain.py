@@ -1,26 +1,27 @@
 #%%
 import torch, pickle, os, datetime
 import numpy as np
-from connectome_embedding import models, data_utils, hemibrain_configs
+from connectome_embedding import models, data_utils
+import embedding_configs
 
 # Which embedding to learn; the configs are defined in
-# connectome_embedding/hemibrain_configs.py:
+# embedding_configs.py:
 #   'central_complex'          all CX types, no L/R split
 #   'central_complex_LR_split' all CX types split into L/R, except Delta7
 #   'whole_hemibrain'          every typed neuron in types with >= 10 neurons
 #   'visual_projection'        LC, LPLC, PVLP, AOTU and DN types (types of any size)
 #   'central_complex_null'     null models of 'central_complex' / 'whole_hemibrain':
 #   'whole_hemibrain_null'     weights shuffled within each type-pair block
-CONFIG = 'central_complex_null'
+CONFIG = 'central_complex_LR_split'
 
 # Null models only: seed of the shuffle, also used to initialize the model.
 # Run once per seed to get several null embeddings.
-SHUFFLE_SEED = 1
+SHUFFLE_SEED = 2
 
 DATAPATH = 'hemibrain_data/'
 EMBEDDING_DIR = 'embeddings/'   # the fitted embedding is saved here
 
-hp = hemibrain_configs.get_config(CONFIG, shuffle_seed=SHUFFLE_SEED)
+hp = embedding_configs.get_config(CONFIG, shuffle_seed=SHUFFLE_SEED)
 print(CONFIG, hp)
 
 assert 'traced-neurons.csv' in os.listdir(DATAPATH), "Please download the hemibrain data from https://neuprint.janelia.org/?dataset=hemibrain:v1.2.1 and place it in the DATAPATH folder."

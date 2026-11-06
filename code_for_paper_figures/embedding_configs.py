@@ -1,5 +1,6 @@
 """
-Settings of the hemibrain embeddings learned by code_for_paper_figures/embed_hemibrain.py.
+Settings of the embeddings learned by code_for_paper_figures/embed_hemibrain.py
+(hemibrain) and code_for_paper_figures/embed_flywire_cave.py (FlyWire).
 
 Each config is a dict of hyperparameters; get_config(name) returns a copy of one.
 Configs:
@@ -13,6 +14,10 @@ Configs:
                                pair of cell types (data_utils.shuffle_within_blocks):
                                type-to-type structure is kept, structure among the
                                neurons of a type is destroyed.
+FlyWire (embed_flywire_cave.py):
+    'flywire_central_complex'          same CX types and settings as 'central_complex'
+    'flywire_central_complex_LR_split' same split and settings as
+                                       'central_complex_LR_split'
 """
 import copy
 
@@ -65,11 +70,36 @@ visual_projection['embedding_regularizer'] = 0.001
 visual_projection['lr'] = 0.02
 visual_projection['save_filename'] = 'visual_projection_embedding.pkl'
 
+# FlyWire central complex: same types and settings as 'central_complex', with cell
+# types from FlyWire's hemibrain_type annotation.
+flywire_central_complex = copy.deepcopy(central_complex)
+del flywire_central_complex['shuffle_within_blocks']
+flywire_central_complex.update({
+    'neuron_class': 'CX',             # FlyWire cell class the neurons are taken from
+    'type_key': 'hemibrain_type',     # annotation column used as the cell type
+    'min_syn_per_connection': 1,      # drop neuron pairs connected by fewer synapses
+    'save_filename': 'flywire_CX_cave_embedding.pkl',
+})
+
+# FlyWire central complex split into L/R (FlyWire's 'side' column), matching what
+# 'central_complex_LR_split' gives in the hemibrain: every type except Delta7, hDelta
+# and vDelta (the hemibrain splits by instance name, and hDelta/vDelta names carry no
+# side, so they stay unsplit there).
+flywire_central_complex_LR_split = copy.deepcopy(flywire_central_complex)
+flywire_central_complex_LR_split['split_LR'] = [
+    t.strip('=*') for t in central_complex['types_wanted']
+    if t not in ('Delta7', 'hDelta', 'vDelta')]
+flywire_central_complex_LR_split['fit_rotations'] = True
+flywire_central_complex_LR_split['embedding_regularizer'] = 1.0
+flywire_central_complex_LR_split['save_filename'] = 'flywire_CX_LRsplit_embedding.pkl'
+
 CONFIGS = {
     'central_complex': central_complex,
     'central_complex_LR_split': central_complex_LR_split,
     'whole_hemibrain': whole_hemibrain,
     'visual_projection': visual_projection,
+    'flywire_central_complex': flywire_central_complex,
+    'flywire_central_complex_LR_split': flywire_central_complex_LR_split,
 }
 
 # null model name -> the config it shuffles

@@ -25,6 +25,14 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 from caveclient import CAVEclient
 from connectome_embedding import models, data_utils
+import embedding_configs
+
+# Which embedding to learn; the configs are defined in
+# embedding_configs.py:
+#   'flywire_central_complex'          CX types, no L/R split (as 'central_complex')
+#   'flywire_central_complex_LR_split' CX types split into L/R, except Delta7, hDelta
+#                                      and vDelta (as 'central_complex_LR_split')
+CONFIG = 'flywire_central_complex'
 
 DATASTACK = 'flywire_fafb_public'
 MATERIALIZATION = 783       # same FlyWire snapshot as the Codex files
@@ -36,29 +44,8 @@ EMBEDDING_DIR = 'embeddings/'   # the fitted embedding is saved here
 PRE_CHUNK = 100             # presynaptic neurons per synapse query
 MAX_ROWS = 500000           # server-side row limit per query
 
-hp = {
-    'neuron_class': 'CX',
-    'type_key': 'hemibrain_type',
-    'types_wanted': ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
-                     'FB', 'hDelta', 'vDelta', 'FR*', 'EL', 'FS', 'PFG',
-                     'PFR', 'IbSpsP'],  # '=' means exact match, '*' means wildcard match
-    'min_num_per_type': 10,
-    'min_syn_per_connection': 1,  # drop neuron pairs connected by fewer synapses
-    'embedding_dim': 5,
-    'wrapper_fn': 'softplus',
-    'embedding_regularizer': 0.01,
-    'lr': 0.05,
-    'steps': 10000,
-    'loss_type': 'poisson',
-    'split_LR': [],  # cell types to split into left/right ('side' column); None splits all
-    'fit_rotations': False,
-    'rotation_steps': 500,
-    'rotation_regularizer': 1000.,
-    'translation_regularizer': 1.,
-    'seed': 0,
-    'save_filename': 'flywire_CX_cave_embedding.pkl',
-}
-print(hp)
+hp = embedding_configs.get_config(CONFIG)
+print(CONFIG, hp)
 os.makedirs(CACHEPATH, exist_ok=True)
 
 client = CAVEclient(DATASTACK)
