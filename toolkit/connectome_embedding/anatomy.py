@@ -9,12 +9,29 @@ labels with angles read off an embedding.
   order_tau           Kendall's tau between embedding and anatomical order, allowing a
                       cut and direction of the circle and a winding factor
   score_groups        tau per cell type (and PB side) with a shuffled-label null
+  mean_tau_per_type   tau per cell type, averaged over its PB sides and FB columns
+  type_groups         CX columnar / CX other / ring / TuBu / other, per cell type
 """
 import re
 import numpy as np
 import pandas as pd
 
 from .utils import projection_directions
+from .data_utils import types_matching
+
+
+# Cell-type groups, as patterns with the matching rules of types_wanted in
+# embed_hemibrain.py ('=' exact match, '*' prefix, otherwise substring).
+# Central complex types (same list as the 'central_complex' embedding config)
+CX_TYPES = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
+            'FB', 'hDelta', 'vDelta', 'FR*', 'EL', 'FS', 'PFG', 'PFR', 'IbSpsP']
+# CX types that tile the PB or FB (columnar), where a ring is expected
+CX_COLUMNAR_TYPES = ["EPG=", 'Delta7', 'PEG', 'EPGt', 'PEN', 'FC', 'PFL', 'PFN',
+                     'hDelta', 'vDelta', 'FR*', 'FS', 'PFG', 'PFR', 'IbSpsP']
+# ring neurons (EB tangential neurons that synapse onto EPG) and the TuBu neurons
+# upstream of them; not columnar
+RING_AND_TUBU_TYPES = ['ER*', 'TuBu*']
+GROUPS = ['CX columnar', 'CX other', 'ring / TuBu', 'other']
 
 
 # A single PB glomerulus: "_L4" or "_R7", followed by "_" or the end of the name.
@@ -209,3 +226,44 @@ def score_groups(labels, angle_column, rng, windings=(1, 0.5, 2),
                 'winding': winding,
             })
     return pd.DataFrame(rows)
+
+
+def mean_tau_per_type(embeddings, data, reference_type='EPG', pb_period=8,
+                      windings=(1, 0.5, 2), min_neurons=4, min_positions=3):
+    """
+    Agreement of each cell type's embedding angles with its anatomical order: tau of
+    score_groups (no shuffles), averaged over the type's groups (PB sides, FB columns).
+    Angles from pca_angles with reference_type. Types without anatomical labels are
+    left out.
+
+    Returns a DataFrame with columns type, anatomy_tau, anatomy_n_groups.
+    """
+    labels = add_fb_angles(anatomical_labels(data.neurons, pb_period=pb_period))
+    labels['angle_pca'] = pca_angles(embeddings, data, reference_type)
+    scores = score_groups(labels, 'angle_pca', rng=None, windings=windings,
+                          min_neurons=min_neurons, min_positions=min_positions,
+                          n_shuffles=0)
+    if len(scores) == 0:
+        return pd.DataFrame(columns=['type', 'anatomy_tau', 'anatomy_n_groups'])
+    return (scores.groupby('type')['tau'].agg(['mean', 'size'])
+            .rename(columns={'mean': 'anatomy_tau', 'size': 'anatomy_n_groups'})
+            .reset_index())
+
+
+def type_groups(types):
+    """Group of each cell type (one of GROUPS), as a dict type -> group."""
+    types = list(types)
+    cx = types_matching(types, CX_TYPES)
+    cx_columnar = types_matching(types, CX_COLUMNAR_TYPES)
+    ring_and_tubu = types_matching(types, RING_AND_TUBU_TYPES) - cx
+    groups = {}
+    for t in types:
+        if t in cx_columnar:
+            groups[t] = 'CX columnar'
+        elif t in cx:
+            groups[t] = 'CX other'
+        elif t in ring_and_tubu:
+            groups[t] = 'ring / TuBu'
+        else:
+            groups[t] = 'other'
+    return groups
