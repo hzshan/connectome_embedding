@@ -61,7 +61,7 @@ from connectome_embedding import plots, anatomy
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-EMBEDDING_NAME = 'embeddings/flywire_CX_cave_embedding.pkl'
+EMBEDDING_NAME = 'embeddings/whole_hemibrain_embedding.pkl'
 
 # Reference cell type: all embeddings are projected on the top two PCs of its embeddings
 REFERENCE_TYPE = 'EPG'

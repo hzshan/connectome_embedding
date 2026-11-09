@@ -21,7 +21,7 @@ files are reported and skipped. ring_detection_auc.py and fig4_circle_screen.py 
 the CSVs.
 
 Embeddings are made by embed_hemibrain.py (the null models with the
-'central_complex_null' / 'whole_hemibrain_null' configs, one per SHUFFLE_SEED).
+'whole_hemibrain_null' config, one per SHUFFLE_SEED).
 Needs ripser (pip install ripser). Run from code_for_paper_figures/.
 """
 import os
@@ -38,9 +38,7 @@ EMBEDDING_DIR = 'embeddings/'
 RESULTS_DIR = 'results/type_geometry/'
 NULL_SEEDS = [0, 1, 2, 3, 4]
 EMBEDDINGS = (['whole_hemibrain_embedding.pkl']
-              + [f'whole_hemibrain_embedding_block_shuffled_seed{s}.pkl' for s in NULL_SEEDS]
-              + ['CX_embedding.pkl']
-              + [f'CX_embedding_block_shuffled_seed{s}.pkl' for s in NULL_SEEDS])
+              + [f'whole_hemibrain_embedding_block_shuffled_seed{s}.pkl' for s in NULL_SEEDS])
 
 MIN_NEURONS = 15     # score types with at least this many neurons
 
