@@ -272,16 +272,14 @@ print(scores.round(3).to_string(index=False))
 for t in SUBTYPES:
     inds = data.neuron_hash[t]
     sub = data.neurons.iloc[inds]
-    pcs = PCA(5).fit_transform(embeddings[inds])
-    fig, axes = plt.subplots(1, 4, figsize=(6, 1.6), dpi=300)
+    pcs = PCA(2).fit_transform(embeddings[inds])
+    fig, axes = plt.subplots(1, 3, figsize=(4.5, 1.6), dpi=300)
     for s, color in zip(SUBTYPES[t], plt.cm.tab10.colors):
         m = (sub['subtype'] == s).values
         axes[0].scatter(pcs[m, 0], pcs[m, 1], s=1, color=color, lw=0, label=s)
-        axes[1].scatter(pcs[m, 3], pcs[m, 4], s=1, color=color, lw=0)
     axes[0].legend(fontsize=4, frameon=False, markerscale=3)
     axes[0].set_xlabel('PC1'); axes[0].set_ylabel('PC2')
-    axes[1].set_xlabel('PC4'); axes[1].set_ylabel('PC5')
-    for ax, coord in zip(axes[2:], ['hex1', 'hex2']):
+    for ax, coord in zip(axes[1:], ['hex1', 'hex2']):
         ax.scatter(pcs[:, 0], pcs[:, 1], s=1, c=sub[coord], cmap='viridis', lw=0)
         ax.set_title(f'color: {coord}', fontsize=5)
         ax.set_xlabel('PC1')
