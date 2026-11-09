@@ -13,11 +13,14 @@ Methods
     features 'in'      synapses received from every neuron in the dataset (column of J)
     features 'out'     synapses sent to every neuron in the dataset (row of J)
     features 'in+out'  both, concatenated
-    - pca:          top two principal components ('in', 'out', 'in+out')
+    features 'in, within type', 'out, within type', 'in+out, within type'
+                       the same, restricted to the neurons of the same type (the
+                       type x type block of J)
+    - pca:          top two principal components (all six feature sets)
     - eigenmap:     Laplacian eigenmaps on a k-nearest-neighbour graph of the features
-                    ('in', 'out', 'in+out')
+                    (all six feature sets)
     - isomap:       Isomap on the same k-nearest-neighbour graph, on output weights
-                    only ('out'), as in Farrell et al. 2021
+                    only ('out', 'out, within type'), as in Farrell et al. 2021
   On all neurons at once:
     - spectral:            eigenvectors of the normalized graph Laplacian of the
                            symmetrized connectivity (J + J^T) / 2, for the smallest
@@ -33,7 +36,14 @@ of each cell type's rows of the eigenvectors. For the embedding model, the angle
 used for sorting in the figures (all embeddings projected on the top two principal
 components of the REFERENCE_TYPE embeddings, as in anatomical_order.py).
 
-Run from code_for_paper_figures/. Plots tau for each method.
+Chance level: tau is taken at the best cut and direction of the circle and the best
+winding, so it is above 0 for a random order, more so for small groups. The null
+shuffles the anatomical labels within each group (cell type and PB side). It depends
+only on the group, not on the method (any fixed order of distinct angles gives the
+same null distribution), so it is computed once, on the embedding model's angles, and
+used for every method.
+
+Run from code_for_paper_figures/. Plots tau for each method and the chance level.
 """
 import pickle
 import numpy as np
@@ -51,10 +61,12 @@ EMBEDDING_NAME = 'embeddings/whole_hemibrain_embedding.pkl'   # embedding model;
 REFERENCE_TYPE = 'EPG'
 
 # Within-type methods and the connection-weight features each one is run on
+ALL_WEIGHTS = ['in', 'out', 'in+out']
+WITHIN_TYPE_WEIGHTS = ['in, within type', 'out, within type', 'in+out, within type']
 WITHIN_TYPE_METHODS = {
-    'pca': ['in', 'out', 'in+out'],
-    'eigenmap': ['in', 'out', 'in+out'],
-    'isomap': ['out'],
+    'pca': ALL_WEIGHTS + WITHIN_TYPE_WEIGHTS,
+    'eigenmap': ALL_WEIGHTS + WITHIN_TYPE_WEIGHTS,
+    'isomap': ['out', 'out, within type'],
 }
 
 N_NEIGHBORS = 10      # k for the nearest-neighbour graphs (capped at n_neurons - 1)
@@ -66,11 +78,13 @@ PB_PERIOD = 8
 WINDINGS = (1, 2)
 MIN_NEURONS = 4
 MIN_POSITIONS = 3
-N_SHUFFLES = 0   # shuffles for the null on tau; 0 skips the null (set e.g. 1000 to compute it)
+N_SHUFFLES = 1000   # shuffles of the anatomical labels for the chance level of tau
 
 # Methods that embed all neurons simultaneously; the rest embed one cell type at a time
 ALL_NEURON_METHODS = ['our method', 'spectral', 'spectral_block_norm']
-SCOPE_COLORS = {'all neurons at once': 'tab:blue', 'one cell type at a time': 'k'}
+SCOPE_COLORS = {'all neurons at once': 'tab:blue',
+                'one cell type at a time, all weights': 'k',
+                'one cell type at a time, within-type weights': 'tab:orange'}
 
 # Cell types whose dots are labelled in the dot plot
 LABELLED_TYPES = ('PEG',)
@@ -93,9 +107,12 @@ def angle_top2_pcs(coords):
 
 
 def type_features(J_log, inds, features):
-    """Connection weights of the neurons in inds: rows of J are outputs, columns inputs."""
-    out_weights = J_log[inds, :]
-    in_weights = J_log[:, inds].T
+    """Connection weights of the neurons in inds: rows of J are outputs, columns inputs.
+    Feature sets ending in ', within type' keep only the weights among the neurons in inds."""
+    partners = inds if features.endswith(', within type') else slice(None)
+    features = features.replace(', within type', '')
+    out_weights = J_log[inds, :][:, partners]
+    in_weights = J_log[:, inds][partners, :].T
     if features == 'in':
         return in_weights
     if features == 'out':
@@ -144,8 +161,12 @@ def within_type_angles(J_log, data, types, method, features):
     return angles
 
 
-def scope_of(method):
-    return 'all neurons at once' if method in ALL_NEURON_METHODS else 'one cell type at a time'
+def scope_of(method, features):
+    if method in ALL_NEURON_METHODS:
+        return 'all neurons at once'
+    if features.endswith(', within type'):
+        return 'one cell type at a time, within-type weights'
+    return 'one cell type at a time, all weights'
 
 
 def method_label(method, feature):
@@ -187,7 +208,7 @@ angle_columns['angle_model'] = ('our method', '')
 # within-type methods on connection weights
 for method, feature_sets in WITHIN_TYPE_METHODS.items():
     for features in feature_sets:
-        column = f'angle_{method}_{features}'
+        column = f"angle_{method}_{features.replace(', ', '_').replace(' ', '_')}"
         labels[column] = within_type_angles(J_log, data, types, method, features)
         angle_columns[column] = (method, features)
 
@@ -199,14 +220,22 @@ labels['angle_spectral_block_norm'] = per_type_angles(
 angle_columns['angle_spectral_block_norm'] = ('spectral_block_norm', 'all neurons')
 
 #%% Score every method against anatomy
+# the shuffled-label null is computed once per group, on the model's angles
 scores = pd.concat(
     [anatomy.score_groups(labels, column, rng, windings=WINDINGS,
                           min_neurons=MIN_NEURONS, min_positions=MIN_POSITIONS,
-                          n_shuffles=N_SHUFFLES).assign(method=method, features=features)
+                          n_shuffles=N_SHUFFLES if column == 'angle_model' else 0)
+     .assign(method=method, features=features)
      for column, (method, features) in angle_columns.items()],
     ignore_index=True)
-scores['above_null'] = scores['tau'] > scores['tau_null_hi'] if N_SHUFFLES > 0 else np.nan
-scores['scope'] = scores['method'].map(scope_of)
+group_keys = ['type', 'pb_side', 'label']
+null_columns = ['tau_null_median', 'tau_null_lo', 'tau_null_hi']
+chance = scores.loc[scores['method'] == 'our method', group_keys + null_columns]
+scores = scores.drop(columns=null_columns).merge(chance, on=group_keys, how='left')
+scores['above_null'] = scores['tau'] > scores['tau_null_hi']
+scores['scope'] = [scope_of(m, f) for m, f in zip(scores['method'], scores['features'])]
+print(f"chance (median tau with shuffled labels): median over groups "
+      f"{chance['tau_null_median'].median():.2f}")
 
 summary = scores.groupby(['method', 'features']).agg(
     median_tau=('tau', 'median'),
@@ -219,24 +248,28 @@ print(summary.to_string())
 print(scores[scores['type'].str.startswith('PEG')]
       [['method', 'features', 'type', 'pb_side', 'tau', 'tau_null_hi']].to_string(index=False))
 
-#%% Plot: tau across groups for each method (box plot)
+#%% Plot: tau across groups for each method (box plot), and the chance level
 order = summary.index.tolist()   # (method, features), best median tau first
 
-plt.figure(figsize=(0.25 * len(order) + 1, 2), dpi=300)
+plt.figure(figsize=(0.25 * (len(order) + 1) + 1, 2), dpi=300)
 taus = [scores[(scores['method'] == m) & (scores['features'] == f)]['tau'].values
         for m, f in order]
-boxes = plt.boxplot(taus, positions=range(len(order)), widths=0.6, showfliers=False,
+taus.append(chance['tau_null_median'].values)   # last box: chance level per group
+colors = [SCOPE_COLORS[scope_of(m, f)] for m, f in order] + ['gray']
+tick_labels = [method_label(m, f) for m, f in order] + ['chance (shuffled labels)']
+boxes = plt.boxplot(taus, positions=range(len(taus)), widths=0.6, showfliers=False,
                     whis=(5, 95), patch_artist=True, medianprops=dict(color='k', lw=1),
                     whiskerprops=dict(lw=0.5), capprops=dict(lw=0.5), boxprops=dict(lw=0.5))
-for box, (method, _) in zip(boxes['boxes'], order):
-    box.set_facecolor(SCOPE_COLORS[scope_of(method)])
+for box, color in zip(boxes['boxes'], colors):
+    box.set_facecolor(color)
     box.set_alpha(0.4)
-plt.xticks(range(len(order)), [method_label(m, f) for m, f in order], rotation=90, fontsize=5)
-for tick, (method, _) in zip(plt.gca().get_xticklabels(), order):
-    tick.set_color(SCOPE_COLORS[scope_of(method)])
+plt.xticks(range(len(taus)), tick_labels, rotation=90, fontsize=5)
+for tick, color in zip(plt.gca().get_xticklabels(), colors):
+    tick.set_color(color)
 plt.ylim(0, 1.05)
 plt.ylabel("Kendall's tau with\nanatomical order", fontsize=5)
-plt.title('box: 25th-75th percentile across groups; line: median; whiskers: 5th-95th percentile',
-          fontsize=5)
-plt.legend(handles=scope_legend('s'), fontsize=5, frameon=False, loc='lower right')
+plt.title('box: 25th-75th percentile across groups; line: median; whiskers: 5th-95th percentile\n'
+          'chance: median tau with shuffled anatomical labels, per group', fontsize=5)
+plt.legend(handles=scope_legend('s'), fontsize=5, frameon=False, loc='center left',
+           bbox_to_anchor=(1.01, 0.5))
 plt.tight_layout()
