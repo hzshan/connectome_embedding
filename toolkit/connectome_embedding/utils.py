@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import scipy
+from scipy.sparse.csgraph import laplacian
 import pandas
 import tqdm
 
@@ -120,6 +121,29 @@ def tick_maker(unique_types, onehot_types, return_idx=False, include_counts=True
         return np.arange(len(unique_types)), tick_labels
     else:
         return tick_inds, tick_labels
+
+
+def spectral_coords(J, n_components):
+    """
+    Spectral embedding (Laplacian eigenmap) of a connectome: eigenvectors of the
+    normalized graph Laplacian of the symmetrized connectivity (J + J^T) / 2, for
+    the n_components smallest non-zero eigenvalues. Returns N x n_components.
+    """
+    W = (J + J.T) / 2
+    L = laplacian(W, normed=True)
+    eigvals, eigvecs = np.linalg.eigh(L)   # eigenvalues in increasing order
+    # skip the eigenvalue(s) at 0 (one per connected component)
+    first = np.searchsorted(eigvals, 1e-8)
+    return eigvecs[:, first:first + n_components]
+
+
+def block_normalize(J, onehot):
+    """Divide each block of J between a pair of cell types by that block's mean."""
+    counts = onehot.sum(0)
+    block_sums = onehot.T @ J @ onehot                 # Ntype x Ntype total synapses
+    block_means = block_sums / np.outer(counts, counts)
+    per_pair_mean = onehot @ block_means @ onehot.T   # N x N, the mean of each pair's block
+    return np.divide(J, per_pair_mean, out=np.zeros_like(J), where=per_pair_mean > 0)
 
 
 def projection_directions(embeddings, reference_inds=None):
