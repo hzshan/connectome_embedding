@@ -101,8 +101,10 @@ for ax, name in zip(axes[0], clouds):
     ax.set_xticks(x)
     ax.set_xticklabels(sub['feature'], rotation=90, fontsize=5)
     ax.set_xlim(-0.5, len(sub) - 0.5)
-    ax.set_ylim(bottom=0)
     ax.set_title(name, fontsize=5)
+# y-axis is shared: set its range once, after all populations are plotted
+y_top = results[['lifetime', 'null_95']].max().max()
+axes[0][0].set_ylim(0, 1.05 * y_top)
 axes[0][0].set_ylabel('lifetime\n(units of RMS radius)')
-axes[0][-1].legend(fontsize=4, frameon=False)
+axes[0][-1].legend(fontsize=4, frameon=False, loc='center left', bbox_to_anchor=(1.02, 0.5))
 plt.tight_layout()
