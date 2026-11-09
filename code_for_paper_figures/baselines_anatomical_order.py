@@ -39,9 +39,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.sparse.csgraph import laplacian
 from sklearn.manifold import SpectralEmbedding, Isomap
-from connectome_embedding import plots, anatomy
+from connectome_embedding import plots, anatomy, utils
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -120,28 +119,6 @@ def within_type_coords(X, method, seed):
     raise ValueError(method)
 
 
-def spectral_coords(J, n_components):
-    """
-    Laplacian eigenmap of the whole connectome: eigenvectors of the normalized
-    Laplacian of (J + J^T) / 2 for the smallest non-zero eigenvalues.
-    """
-    W = (J + J.T) / 2
-    L = laplacian(W, normed=True)
-    eigvals, eigvecs = np.linalg.eigh(L)   # eigenvalues in increasing order
-    # skip the eigenvalue(s) at 0 (one per connected component)
-    first = np.searchsorted(eigvals, 1e-8)
-    return eigvecs[:, first:first + n_components]
-
-
-def block_normalize(J, onehot):
-    """Divide each block of J between a pair of cell types by that block's mean."""
-    counts = onehot.sum(0)
-    block_sums = onehot.T @ J @ onehot                 # Ntype x Ntype total synapses
-    block_means = block_sums / np.outer(counts, counts)
-    per_pair_mean = onehot @ block_means @ onehot.T   # N x N, the mean of each pair's block
-    return np.divide(J, per_pair_mean, out=np.zeros_like(J), where=per_pair_mean > 0)
-
-
 def per_type_angles(coords, data, types):
     """Angle of each neuron in the top two principal components of its type's coordinates."""
     angles = np.full(data.N, np.nan)
@@ -215,10 +192,10 @@ for method, feature_sets in WITHIN_TYPE_METHODS.items():
         angle_columns[column] = (method, features)
 
 # whole-dataset spectral methods
-labels['angle_spectral'] = per_type_angles(spectral_coords(J, N_SPECTRAL), data, types)
+labels['angle_spectral'] = per_type_angles(utils.spectral_coords(J, N_SPECTRAL), data, types)
 angle_columns['angle_spectral'] = ('spectral', 'all neurons')
 labels['angle_spectral_block_norm'] = per_type_angles(
-    spectral_coords(block_normalize(J, onehot), N_SPECTRAL), data, types)
+    utils.spectral_coords(utils.block_normalize(J, onehot), N_SPECTRAL), data, types)
 angle_columns['angle_spectral_block_norm'] = ('spectral_block_norm', 'all neurons')
 
 #%% Score every method against anatomy
