@@ -374,7 +374,8 @@ def shuffle_within_blocks(J, onehot_types, rng):
     """
     Shuffle connection weights within each block of J between a pair of cell types.
 
-    This is for making a null model for the connectivity matrix, where the type-to-type structure
+    Used as a null model: the type-to-type structure of the connectivity is kept,
+    and any structure among the neurons of a type is removed.
 
     For every pair of types (a, b), the entries J[i, j] with i of type a and j of
     type b are randomly permuted among themselves; self-connections (i == j) are
@@ -459,6 +460,28 @@ def auc_with_ci(scores_positive, scores_negative, n_bootstrap, rng):
     pos, neg = np.asarray(scores_positive), np.asarray(scores_negative)
     boot = [auc(rng.choice(pos, len(pos)), rng.choice(neg, len(neg))) for _ in range(n_bootstrap)]
     return auc(pos, neg), np.percentile(boot, 2.5), np.percentile(boot, 97.5)
+
+
+def auc_difference_with_ci(scores_a, scores_b, is_positive, is_negative, n_bootstrap, rng):
+    """
+    Difference AUC(score a) - AUC(score b) for two scores of the same items, with a 95%
+    paired bootstrap interval: each bootstrap sample resamples the positives and the
+    negatives once and computes both AUCs on that sample.
+
+    Args:
+        scores_a, scores_b: arrays of the two scores, one entry per item
+        is_positive, is_negative: boolean arrays selecting the positive and negative items
+    Returns:
+        (difference, lower, upper)
+    """
+    a, b = np.asarray(scores_a), np.asarray(scores_b)
+    pos, neg = np.nonzero(is_positive)[0], np.nonzero(is_negative)[0]
+    boot = []
+    for _ in range(n_bootstrap):
+        p, n = rng.choice(pos, len(pos)), rng.choice(neg, len(neg))
+        boot.append(auc(a[p], a[n]) - auc(b[p], b[n]))
+    difference = auc(a[pos], a[neg]) - auc(b[pos], b[neg])
+    return difference, np.percentile(boot, 2.5), np.percentile(boot, 97.5)
 
 
 def roc_curve(scores_positive, scores_negative):
