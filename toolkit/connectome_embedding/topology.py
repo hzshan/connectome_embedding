@@ -6,8 +6,9 @@ persistent homology and intrinsic dimension.
   lifetimes            lifetimes of H1, H2, ... features (Vietoris-Rips, ripser)
   matched_gaussian     Gaussian cloud with the same size and PCA spectrum
   null_lifetimes       lifetimes of the longest features in matched Gaussian clouds
-  participation_ratio  PCA participation ratio
   two_nn_dimension     TwoNN intrinsic dimension (Facco et al. 2017)
+  gride_dimension      Gride intrinsic dimension at a given neighbour scale
+                       (Denti et al. 2022); TwoNN is the smallest scale
 
 Signatures: a ring has one long-lived H1 feature; a torus two H1 and one H2.
 Needs ripser (pip install ripser).
@@ -76,12 +77,6 @@ def null_lifetimes(x, n_null, rng, features, maxdim=2):
     return out
 
 
-def participation_ratio(x):
-    """(sum of PCA variances)^2 / sum of squared variances."""
-    variances = np.linalg.svd(x - x.mean(0), compute_uv=False)**2
-    return variances.sum()**2 / np.sum(variances**2)
-
-
 def two_nn_dimension(x):
     """TwoNN intrinsic dimension (Facco et al. 2017): MLE from ratios of 2nd to 1st neighbour distances."""
     dist = np.sqrt(((x[:, None, :] - x[None, :, :])**2).sum(-1))
@@ -90,3 +85,34 @@ def two_nn_dimension(x):
     mu = nearest[:, 1] / nearest[:, 0]
     mu = mu[np.isfinite(mu) & (mu > 1)]
     return len(mu) / np.sum(np.log(mu))
+
+
+def gride_dimension(x, n1):
+    """
+    Gride intrinsic dimension (Denti et al. 2022) at neighbour scale n1.
+
+    Maximum-likelihood estimate from mu = r_n2 / r_n1, the ratio of the distances from
+    each point to its n2-th and n1-th nearest neighbours, with n2 = 2 * n1. For points
+    with locally uniform density in d dimensions, mu has density
+        f(mu) = d (mu^d - 1)^(n2 - n1 - 1) / (B(n2 - n1, n1) mu^((n2 - 1) d + 1)).
+    n1 = 1 is TwoNN. Larger n1 measures the dimension at a larger scale and is less
+    sensitive to how regularly the nearest neighbours are spaced.
+    Needs n2 < number of points; returns NaN otherwise.
+    """
+    from scipy.optimize import minimize_scalar
+    n2 = 2 * n1
+    if n2 >= len(x):
+        return np.nan
+    dist = np.sqrt(((x[:, None, :] - x[None, :, :])**2).sum(-1))
+    np.fill_diagonal(dist, np.inf)
+    nearest = np.sort(dist, 1)
+    mu = nearest[:, n2 - 1] / nearest[:, n1 - 1]
+    log_mu = np.log(mu[np.isfinite(mu) & (mu > 1)])
+
+    def neg_log_likelihood(d):
+        # log(mu^d - 1), computed stably; the Beta-function term does not depend on d
+        log_mu_d_minus_1 = d * log_mu + np.log1p(-np.exp(-d * log_mu))
+        return -np.sum(np.log(d) + (n2 - n1 - 1) * log_mu_d_minus_1
+                       - ((n2 - 1) * d + 1) * log_mu)
+
+    return minimize_scalar(neg_log_likelihood, bounds=(1e-3, 100), method='bounded').x
