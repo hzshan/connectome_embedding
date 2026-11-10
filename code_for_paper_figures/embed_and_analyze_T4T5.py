@@ -18,15 +18,18 @@ whether the embeddings of T4 and T5 neurons
 The subtype labels are used only for scoring.
 
 Data: the maleCNS v0.9 release (body annotations and connection weights, feather
-files). One optic lobe, restricted to a patch of columns to keep the connectivity
-matrix small. Neurons are chosen by connectivity alone:
-  - T4 and T5 neurons in the patch;
+files). One optic lobe, either whole or restricted to a patch of columns
+(PATCH_RADIUS) to keep the connectivity matrix small. Neurons are chosen by
+connectivity alone:
+  - T4 and T5 neurons in the optic lobe (or the patch);
   - partner types: cell types that provide at least PARTNER_MIN_FRACTION of the
     input synapses of T4 or of T5, or receive at least that fraction of their output
     synapses (over the whole optic lobe, subtypes pooled, so the choice does not
     depend on the subtype labels);
   - partner neurons: neurons of the partner types with at least PARTNER_MIN_SYN
-    synapses (both directions) with the T4 and T5 neurons in the patch;
+    synapses (both directions) with the selected T4 and T5 neurons;
+    with PARTNER_MIN_FRACTION = None there are no partners: only T4 and T5 and the
+    connections among them;
   - types with fewer than MIN_NUM_PER_TYPE neurons in the selection are dropped.
 Columns are given by the annotated hex coordinates (assignedOlHex1/2) of the
 columnar medulla neurons. T4 and T5 have none; their column is estimated as the
@@ -62,21 +65,22 @@ ANNOTATION_FILE = 'body-annotations-male-cns-v0.9-minconf-0.5.feather'
 WEIGHTS_FILE = 'connectome-weights-male-cns-v0.9-minconf-0.5.feather'
 EMBEDDING_DIR = 'embeddings/'   # the fitted embedding is saved here
 
-# Use a patch of columns to keep the connectivity matrix small; the patch is centered
 SIDE = 'R'                 # optic lobe (somaSide of the T4 / T5 neurons)
-PATCH_RADIUS = 6           # keep T4 / T5 with |hex1 - c1| <= R and |hex2 - c2| <= R,
-                           # around the median column (c1, c2) of Mi1
+PATCH_RADIUS = None        # None: all T4 / T5 of the optic lobe. A number R: keep T4 / T5
+                           # with |hex1 - c1| <= R and |hex2 - c2| <= R, around the median
+                           # column (c1, c2) of Mi1, to keep the connectivity matrix small
 
 SUBTYPES = {'T4': ['T4a', 'T4b', 'T4c', 'T4d'],
             'T5': ['T5a', 'T5b', 'T5c', 'T5d']}
 
 # select input/output types to include
-PARTNER_MIN_FRACTION = 0.01  # partner type: >= this fraction of T4 or T5 input or output synapses
-PARTNER_MIN_SYN = 10         # partner neuron: >= this many synapses with the patch's T4 / T5
+PARTNER_MIN_FRACTION = 0.01  # partner type: >= this fraction of T4 or T5 input or output
+                             # synapses; None: no partner types (T4 and T5 only)
+PARTNER_MIN_SYN = 10         # partner neuron: >= this many synapses with the selected T4 / T5
 MIN_NUM_PER_TYPE = 3         # drop types with fewer neurons in the selection
 
 hp = {
-    'embedding_dim': 7,
+    'embedding_dim': 5,
     'wrapper_fn': 'softplus',
     'embedding_regularizer': 0.001,
     'lr': 0.05,
@@ -84,8 +88,9 @@ hp = {
     'loss_type': 'poisson',
     'seed': 0,
 }
-hp['save_filename'] = (f"optic_lobe_T4T5_{SIDE}_patch{PATCH_RADIUS}_partners{PARTNER_MIN_FRACTION}"
-                       f"_D{hp['embedding_dim']}_seed{hp['seed']}.pkl")
+hp['save_filename'] = (f"optic_lobe_T4T5_{SIDE}_{'whole' if PATCH_RADIUS is None else f'patch{PATCH_RADIUS}'}"
+                       f"{'_T4T5only' if PARTNER_MIN_FRACTION is None else f'_partners{PARTNER_MIN_FRACTION}'}"
+                       f"_D{hp['embedding_dim']}_reg{hp['embedding_regularizer']:g}_seed{hp['seed']}.pkl")
 
 # Scoring
 N_FOLDS = 5
@@ -95,6 +100,8 @@ RETINOTOPY_DEGREE = 2      # polynomial in column position regressed out before 
 CLUSTER_PCS = 2            # cluster the top CLUSTER_PCS principal components of the
                            # residuals; None clusters all embedding dimensions
 SCORE_SEED = 0
+PCS_3D = (2, 3, 4)         # principal components (0-based) of the T4 / T5 embeddings
+                           # shown in the 3D plot; must be < embedding_dim
 
 
 #%% Annotations and the patch of columns
@@ -111,6 +118,8 @@ print(f'patch center: hex1 = {center.iloc[0]:.0f}, hex2 = {center.iloc[1]:.0f}')
 # since the grid is hexagonal, the patch is a rectangle in coordinate space but
 #  a parallelogram in physical space
 def in_patch(hex1, hex2):
+    if PATCH_RADIUS is None:
+        return np.ones(len(hex1), dtype=bool)
     return ((np.abs(hex1 - center.iloc[0]) <= PATCH_RADIUS)
             & (np.abs(hex2 - center.iloc[1]) <= PATCH_RADIUS))
 
@@ -132,8 +141,11 @@ for family, subs in SUBTYPES.items():
         per_type = c.groupby(type_of.reindex(c[partner]).values)['weight'].sum()
         shares.append((per_type / c['weight'].sum()).rename(f'{family} {direction}'))
 shares = pd.concat(shares, axis=1).fillna(0).drop(index=subtype_list, errors='ignore')
-partner_types = shares.index[(shares >= PARTNER_MIN_FRACTION).any(axis=1)].tolist()
-print(f'{len(partner_types)} partner types (>= {PARTNER_MIN_FRACTION:.0%} of T4 or T5 '
+if PARTNER_MIN_FRACTION is None:
+    partner_types = []
+else:
+    partner_types = shares.index[(shares >= PARTNER_MIN_FRACTION).any(axis=1)].tolist()
+print(f'{len(partner_types)} partner types (>= {PARTNER_MIN_FRACTION} of T4 or T5 '
       f'input or output synapses):')
 #%% Estimated Retinotopic Positions of all T4 and T5: weighted mean column of their
 # presynaptic partners
@@ -156,7 +168,7 @@ positions = pd.concat([
     estimated[['hex1', 'hex2']].assign(position_source='inputs'),
 ])
 
-#%% Select neurons: T4 / T5 in the patch, plus partner neurons connected to them
+#%% Select neurons: T4 / T5 (in the patch, if any), plus partner neurons connected to them
 t4t5 = side_t4t5.join(positions, on='bodyId', how='inner')
 t4t5 = t4t5[in_patch(t4t5['hex1'], t4t5['hex2'])]
 t4t5_ids = set(t4t5['bodyId'])
@@ -289,9 +301,6 @@ for t in SUBTYPES:
     plt.tight_layout()
 
 #%% Interactive 3D plot: T4 and T5 embeddings (PCS_3D), colored by subtype
-
-# Interactive 3D plot: which principal components of the T4 / T5 embeddings to show
-PCS_3D = (3, 4, 5)
 
 for t in SUBTYPES:
     inds = data.neuron_hash[t]
