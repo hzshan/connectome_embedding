@@ -321,31 +321,58 @@ class InteractionModel(Model):
         return sq_norms[:, None] + sq_norms[None, :] - 2 * cross
 
 
-    def pred_synapses(self):
+    def pred_synapses(self, pairs=None):
         """
+        Predicted mean number of synapses.
 
+        With no arguments: the N x N matrix, entry (i, j) for synapses from
+        neuron i to neuron j.
+        With pairs, a K x 2 integer tensor of neuron indices, row k = (source,
+        target): one prediction per pair, for synapses from neuron pairs[k, 0] to
+        neuron pairs[k, 1]; the same values as the matrix entries at those
+        pairs, computed without forming the matrix.
         """
         eps_dist = 0.01
+        by_pair = pairs is not None
 
-        scaling = self.expand_type_pairs(self.A)
-        covar = self.expand_type_pairs(self.C**2 + eps_dist)
-        bias = self.expand_type_pairs(self.B)
+        if by_pair:
+            source_inds, target_inds = pairs[:, 0], pairs[:, 1]
+            # kernel parameters of each pair's (source type, target type)
+            types = self.onehot_types.argmax(1)
+            source_types, target_types = types[source_inds], types[target_inds]
+            scaling = self.A[source_types, target_types]
+            covar = self.C[source_types, target_types]**2 + eps_dist
+            bias = self.B[source_types, target_types]
+            z_source, z_target = self.embeddings[source_inds], self.embeddings[target_inds]
+        else:
+            scaling = self.expand_type_pairs(self.A)
+            covar = self.expand_type_pairs(self.C**2 + eps_dist)
+            bias = self.expand_type_pairs(self.B)
 
-        # emb_sum = torch.sum(source_emb**2, 1, keepdim=True)
-        # target_sum = torch.sum(target_emb**2, 1, keepdim=True)
-        # cross_term = source_emb @ target_emb.T
-        # dist = emb_sum + target_sum.T - 2 * cross_term
         if self.use_transforms:
             if self.kernel_type == 'dot_product':
                 raise NotImplementedError(
                     "dot_product kernel is not implemented when use_transforms=True"
                 )
-            dist_sq = self.get_dist_mat_with_transforms()
-        else:
-            if self.kernel_type == 'distance':
-                dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
+            if by_pair:
+                # as get_dist_mat_with_transforms, one rotation per pair:
+                # d = ||z_i||^2 + ||z_j||^2 - 2 z_j . (R_{t_i t_j} z_i)
+                rotations = self.get_rotation_mats()[source_types, target_types]
+                rotated_sources = torch.einsum('kxy,ky->kx', rotations, z_source)
+                dist_sq = ((z_source**2).sum(1) + (z_target**2).sum(1)
+                           - 2 * (rotated_sources * z_target).sum(1))
             else:
-                assert self.kernel_type == 'dot_product'
+                dist_sq = self.get_dist_mat_with_transforms()
+        elif self.kernel_type == 'distance':
+            if by_pair:
+                dist_sq = ((z_source - z_target)**2).sum(1)
+            else:
+                dist_sq = torch.cdist(self.embeddings, self.embeddings)**2
+        else:
+            assert self.kernel_type == 'dot_product'
+            if by_pair:
+                dist_sq = -(z_source * z_target).sum(1)
+            else:
                 dist_sq = -self.embeddings @ self.embeddings.T
 
         nonlinear_fn = None
@@ -361,6 +388,100 @@ class InteractionModel(Model):
         content = scaling * nonlinear_fn(-dist_sq / covar) + bias
 
         return self.wrapper_fn(content)
+
+
+class PairSampler:
+    """
+    Draws neuron pairs for a stochastic estimate of the mean loss over the
+    pairs in a mask (the loss of masked_loss), without forming N x N
+    predictions.
+
+    The pairs in the mask are split into connected pairs (target > 0) and
+    unconnected pairs (target = 0). Each draw takes n_connected pairs from the
+    first group and n_unconnected from the second, uniformly with replacement;
+    the estimate weights each group's mean loss by the group's share of the
+    mask's pairs, so it is unbiased and has the scale of the full mean loss.
+    Sampling the sparse connected pairs separately keeps the variance low.
+
+    target_mat: N x N array of synapse counts (dense, or a scipy.sparse matrix)
+    mask: N x N boolean array of the pairs in the loss, or None for all
+        off-diagonal pairs
+    """
+    def __init__(self, target_mat, mask, n_connected, n_unconnected, seed=0):
+        import scipy.sparse as sp
+        self.N = target_mat.shape[0]
+        W = sp.coo_matrix(target_mat)
+        rows, cols, vals = W.row, W.col, W.data.astype(np.float32)
+        keep = (vals > 0) & (rows != cols)
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            assert mask.shape == (self.N, self.N)
+            keep &= mask[rows, cols]
+        self.rows = torch.as_tensor(rows[keep], dtype=torch.long)
+        self.cols = torch.as_tensor(cols[keep], dtype=torch.long)
+        self.vals = torch.as_tensor(vals[keep])
+        self.mask = mask
+        # sorted linear indices of the connected pairs, to reject them when
+        # drawing unconnected pairs
+        self.connected_index = torch.sort(self.rows * self.N + self.cols).values
+
+        n_pairs = (self.N * (self.N - 1) if mask is None
+                   else int(mask.sum() - np.diag(mask).sum()))
+        self.n_connected_total = len(self.vals)
+        self.n_unconnected_total = n_pairs - self.n_connected_total
+        self.weight_connected = self.n_connected_total / n_pairs
+        self.weight_unconnected = self.n_unconnected_total / n_pairs
+        self.n_connected = min(n_connected, self.n_connected_total)
+        self.n_unconnected = n_unconnected
+        self.generator = torch.Generator().manual_seed(seed)
+
+    def _unconnected(self):
+        """n_unconnected pairs drawn uniformly from the unconnected pairs in the mask.
+        This does not produce the full list of unconnected pairs and then sample;
+        instead, it samples from all pairs and throws away connected pairs"""
+        found = []
+        n = 0   # accepted pairs so far
+        while n < self.n_unconnected:
+            # draw 20% more pairs than still needed, to allow for rejections
+            m = int(1.2 * (self.n_unconnected - n)) + 16
+            # random (source, target) pairs, uniform over all ordered pairs
+            i = torch.randint(self.N, (m,), generator=self.generator)
+            j = torch.randint(self.N, (m,), generator=self.generator)
+            # one number per pair, in the same encoding as connected_index
+            index = i * self.N + j
+            # binary search; clamp since an index above all connected ones lands past the end
+            pos = torch.searchsorted(self.connected_index, index).clamp(max=len(self.connected_index) - 1)
+            # accept: not a self-connection, and not found in connected_index
+            ok = (i != j) & (self.connected_index[pos] != index)
+            if self.mask is not None:
+                # also require the pair to be in the mask
+                ok &= torch.as_tensor(self.mask[i.numpy(), j.numpy()])
+            found.append(torch.stack([i[ok], j[ok]], 1)); n += int(ok.sum())
+        # the last pass may overshoot; keep exactly n_unconnected
+        return torch.cat(found)[:self.n_unconnected]
+
+    def sample(self):
+        """(pairs, target values, weights), pairs a K x 2 tensor of (source,
+        target) neuron indices: weighting each pair's
+        loss by its weight and summing gives the loss estimate."""
+        k = torch.randint(self.n_connected_total, (self.n_connected,), generator=self.generator)
+        pairs = torch.cat([torch.stack([self.rows[k], self.cols[k]], 1), self._unconnected()])
+        values = torch.cat([self.vals[k], torch.zeros(self.n_unconnected)])
+        weights = torch.cat([
+            torch.full((self.n_connected,), self.weight_connected / self.n_connected),
+            torch.full((self.n_unconnected,), self.weight_unconnected / self.n_unconnected)])
+        return pairs, values, weights
+
+
+def pair_loss(preds, target_values, weights, loss_type):
+    """Weighted sum of the per-pair loss of masked_loss (see PairSampler)."""
+    if loss_type == 'poisson':
+        elementwise = preds - target_values * torch.log(preds + 1e-8)
+    else:
+        assert loss_type == 'mse'
+        elementwise = (preds - target_values)**2 / (1 + target_values**2)
+    return (elementwise * weights).sum()
+
 
 def masked_loss(preds, target_mat, mask, loss_type):
     """
@@ -382,13 +503,14 @@ def masked_loss(preds, target_mat, mask, loss_type):
 def train_model(model, target_mat,
                 loss_type='poisson', lr=0.01, steps=40000,
                 print_every=2000, reg_fn=None, train_mask=None, test_mask=None,
-                compile=True):
+                compile=True, pairs_per_step=None, pair_seed=0, lr_end=None):
     """
     Train an embedding model to fit the connectivity matrix with Adam.
 
     Args:
     model: a Model; its pred_synapses() returns the N x N predicted means
-    target_mat: N x N tensor of synapse counts
+    target_mat: N x N tensor of synapse counts (with pairs_per_step, also a
+        scipy.sparse matrix)
     loss_type: 'poisson' or 'mse' (see masked_loss)
     reg_fn: optional function of the model, added to the loss
     train_mask: N x N boolean array, entries used for the loss. Default: all
@@ -399,43 +521,73 @@ def train_model(model, target_mat,
         operations on N x N matrices (several times faster for large N; the
         first step takes longer while it compiles). Falls back to uncompiled
         if compilation fails.
+    pairs_per_step: None for the loss over all pairs at every step. Otherwise
+        (n_connected, n_unconnected): each step uses an unbiased estimate of
+        that loss from n_connected connected and n_unconnected unconnected
+        neuron pairs drawn at random (PairSampler), so memory and time per step
+        do not grow as N^2. Needs a model whose pred_synapses takes
+        a K x 2 tensor of neuron pairs (InteractionModel).
+        The losses returned are the estimates.
+    pair_seed: seed of the pair sampling.
+    lr_end: None for a constant learning rate. Otherwise the learning rate decays
+        exponentially from lr at the first step to lr_end at the last, which
+        lets the noisy steps of pair sampling settle.
 
     Returns: losses (training loss without reg_fn, per step),
     norms of the embeddings per step, and an array of zeros (unused).
     """
     _N = target_mat.shape[0]
-    target_mat = torch.as_tensor(target_mat, dtype=torch.float32)
 
-    if train_mask is None:
-        train_mask = ~np.eye(_N, dtype=bool)
+    if pairs_per_step is not None:
+        n_connected, n_unconnected = pairs_per_step
+        sampler = PairSampler(target_mat, train_mask, n_connected, n_unconnected, seed=pair_seed)
+        test_sampler = (None if test_mask is None else
+                        PairSampler(target_mat, test_mask, n_connected, n_unconnected, seed=pair_seed + 1))
+
+        def pair_estimate(s):
+            pairs, values, weights = s.sample()
+            return pair_loss(model.pred_synapses(pairs), values, weights, loss_type)
+
+        def total_loss():
+            loss = pair_estimate(sampler)
+            tot_loss = loss + reg_fn(model) if reg_fn is not None else loss
+            return tot_loss, loss, None
+        loss_fn = total_loss
     else:
-        assert train_mask.shape == target_mat.shape
-        assert train_mask.dtype == bool
-    train_mask = torch.as_tensor(train_mask, dtype=torch.float32)
+        target_mat = torch.as_tensor(target_mat, dtype=torch.float32)
 
-    if test_mask is not None:
-        assert test_mask.shape == target_mat.shape
-        assert test_mask.dtype == bool
-        test_mask = torch.as_tensor(test_mask, dtype=torch.float32)
+        if train_mask is None:
+            train_mask = ~np.eye(_N, dtype=bool)
+        else:
+            assert train_mask.shape == target_mat.shape
+            assert train_mask.dtype == bool
+        train_mask = torch.as_tensor(train_mask, dtype=torch.float32)
 
-    def total_loss():
-        preds = model.pred_synapses()
-        loss = masked_loss(preds, target_mat, train_mask, loss_type)
-        tot_loss = loss + reg_fn(model) if reg_fn is not None else loss
-        return tot_loss, loss, preds
+        if test_mask is not None:
+            assert test_mask.shape == target_mat.shape
+            assert test_mask.dtype == bool
+            test_mask = torch.as_tensor(test_mask, dtype=torch.float32)
 
-    loss_fn = total_loss
-    if compile:
-        try:
-            # compile the forward and backward passes now, so that a failure
-            # falls back to uncompiled training here
-            compiled = torch.compile(total_loss)
-            compiled()[0].backward()
-            loss_fn = compiled
-        except Exception as err:
-            print(f'torch.compile failed, training uncompiled: {type(err).__name__}')
+        def total_loss():
+            preds = model.pred_synapses()
+            loss = masked_loss(preds, target_mat, train_mask, loss_type)
+            tot_loss = loss + reg_fn(model) if reg_fn is not None else loss
+            return tot_loss, loss, preds
+
+        loss_fn = total_loss
+        if compile:
+            try:
+                # compile the forward and backward passes now, so that a failure
+                # falls back to uncompiled training here
+                compiled = torch.compile(total_loss)
+                compiled()[0].backward()
+                loss_fn = compiled
+            except Exception as err:
+                print(f'torch.compile failed, training uncompiled: {type(err).__name__}')
 
     optim = torch.optim.Adam(params=model.params, lr=lr)
+    scheduler = (None if lr_end is None else
+                 torch.optim.lr_scheduler.ExponentialLR(optim, gamma=(lr_end / lr) ** (1 / max(steps - 1, 1))))
 
     losses = np.zeros(steps)
     embedding_norms = np.zeros(steps)
@@ -451,6 +603,8 @@ def train_model(model, target_mat,
 
         tot_loss.backward()
         optim.step()
+        if scheduler is not None:
+            scheduler.step()
 
         losses[i] = loss.item()
         embedding_norms[i] = torch.norm(model.embeddings).item()
@@ -463,7 +617,10 @@ def train_model(model, target_mat,
                 f'avg sq embed norm: {embedding_norms[i]**3 / _N:.2f}')
             if test_mask is not None:
                 with torch.no_grad():
-                    test_loss = masked_loss(preds, target_mat, test_mask, loss_type)
+                    if pairs_per_step is not None:
+                        test_loss = pair_estimate(test_sampler)
+                    else:
+                        test_loss = masked_loss(preds, target_mat, test_mask, loss_type)
                 print(f'test loss: {test_loss:.4f}')
 
     return losses, embedding_norms, rotation_norms
