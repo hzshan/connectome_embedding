@@ -1,106 +1,44 @@
 #%%
-# The null distribution of circularity scores is made by circle_null_random_points.py.
-#TODO: create code for generating the embeddings
+"""
+Fig. 4: circularity screen of the cell types in the whole-hemibrain embedding.
 
+The circularity scores are computed by score_type_geometry.py (circle search and
+circularity score per cell type); this script plots them. How well the circularity
+score separates CX from non-CX types is in ring_detection_auc.py.
+Run from code_for_paper_figures/.
+"""
+import os
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-import torch
-from connectome_embedding import utils, plots, models
-import pickle
-from scipy import stats
+from connectome_embedding import plots
 
 plots.set_rc_params()
 
-embedding_name = '../Learned_embeddings/embedding_Allhemibrain_D5_09262025.pkl'
-model_and_data = pickle.load(open(embedding_name, 'rb'))
-model = model_and_data['model']
-data = model_and_data['data']
-model.embeddings = model.embeddings.detach()
+# Per-type tables made by score_type_geometry.py
+RESULTS_DIR = 'results/type_geometry/'
+HEMIBRAIN_EMBEDDING = 'whole_hemibrain_embedding'
 
-sorted_inds = utils.sort_embeddings(model.embeddings, data)
-sorted_Adj = data.J[sorted_inds][:, sorted_inds]
+hemibrain_table = pd.read_csv(os.path.join(RESULTS_DIR, HEMIBRAIN_EMBEDDING, 'circularity.csv'))
 
-CXembedding_name = '../Learned_embeddings/embedding_AllCX_D5_09232025.pkl'
-CXmodel_and_data = pickle.load(open(CXembedding_name, 'rb'))
-CXmodel = CXmodel_and_data['model']
-CXdata = CXmodel_and_data['data']
 
-# Settings of the circle search; must match the ones used to make the null
-CIRCLE_SEARCH = {'nseeds_to_try': 50, 'max_iter': 10}
-
-# Null distribution of circularity scores for random points, made by circle_null_random_points.py
-null = pickle.load(open('circle_null_random_points_D5.pkl', 'rb'))
-assert null['circle_search'] == CIRCLE_SEARCH, 'null was made with a different circle search'
-
-def evaluate_circularity(model, data):
-    embeddings_2d = []
-    best_projs = []
-    best_biases = []
-    best_perms = []
-
-    for i, type in enumerate(data.types):
-        print(type)
-        x = model.embeddings[data.neuron_hash[type]]
-
-        found_circle, projs, perms = utils.solve_shadowmatic2(x, **CIRCLE_SEARCH)
-        embeddings_2d.append(found_circle)
-        best_perms.append(perms)
-        best_projs.append(projs)
-
-    circularity_via_norm = np.zeros(len(data.types))
-    for i in range(len(data.types)):
-        circularity_via_norm[i] = utils.circ_score_via_norm(embeddings_2d[i], skip_alignment=True)
-
-    assert null['D'] == model.embeddings.shape[1], 'null was made for a different embedding dimension'
-
-    p_values = np.zeros(len(data.types))
-    for i in range(len(data.types)):
-        # Null scores for random point clouds with as many points as this type has neurons.
-        # The null only goes up to N = max_N (149), so larger types use the max_N null.
-        # This is extra conservative: random points fit a circle less well as N grows,
-        # so the null for a larger N would sit lower, and the type's p-value would be
-        # smaller. Using the max_N null can only make large types look less significant.
-        # (Worth confirming on the null-vs-N plot from circle_null_random_points.py.)
-        N = min(int(data.N_per_type[i]), null['max_N'])
-        scores_from_random_points_same_N = null['scores'][N]
-        p_values[i] = 1 - stats.norm.cdf(circularity_via_norm[i], np.mean(scores_from_random_points_same_N), np.std(scores_from_random_points_same_N))
-
-    return circularity_via_norm, p_values
-
-def plot_circularity(data, circularity_via_norm, p_values, colors=None):
-    argsort = np.argsort(circularity_via_norm)[::-1]
+def plot_circularity(table, colors=None, title=''):
+    """Bar per type, sorted by circularity score. colors: one per row of table, or None (gray)."""
+    table = table.assign(color='gray' if colors is None else list(colors))
+    table = table.sort_values('circularity', ascending=False).reset_index(drop=True)
     plt.figure(figsize=(12, 1.5), dpi=300)
 
-    for i in range(len(data.types)):
-        text = ''
-        if p_values[argsort][i] < 0.001:
-            text = '***'
-        elif p_values[argsort][i] < 0.01:
-            text = '**'
-        elif p_values[argsort][i] < 0.05:
-            text = '*'
-
-        plt.text(i + 0.5, circularity_via_norm[argsort][i] + 0.003 - 0.6, text, ha='center', va='bottom', fontsize=8, rotation=90)
-
     plt.xticks(rotation=90, fontsize=5)
-    
-    if colors is None:
-        colors = 'gray'
-    else:
-        colors = np.array(colors)[argsort]
-        
-    plt.bar(np.array(data.types)[argsort], circularity_via_norm[argsort] - 0.6, color=colors)
+    plt.bar(table['type'], table['circularity'] - 0.6, color=table['color'])
     plt.yticks([0, 0.4], ['0.6', '1.0'])
     plt.ylim([0, 0.5])
-    plt.xlim(-1, len(data.types) - 0.5)
+    plt.xlim(-1, len(table) - 0.5)
+    plt.ylabel('circularity\nscore', fontsize=6)
+    plt.title(title, fontsize=6)
     plt.tight_layout()
 
-#%% Process CX Model
-CX_circ, CX_p_values = evaluate_circularity(CXmodel, CXdata)
-plot_circularity(CXdata, CX_circ, CX_p_values)
 
-#%% Process Whole-hemibrain Model
-data_circ, data_p_values = evaluate_circularity(model, data)
-CX_types = CXdata.type_hash.keys()
-celltype_colors = ['goldenrod' if t in CX_types else 'gray' for t in data.types]
-plot_circularity(data, data_circ, data_p_values, colors=celltype_colors)
+#%% Whole-hemibrain embedding; CX types in gold
+is_cx = hemibrain_table['group'].isin(['CX columnar', 'CX other'])
+plot_circularity(hemibrain_table, colors=np.where(is_cx, 'goldenrod', 'gray'),
+                 title=f'Whole-hemibrain embedding ({HEMIBRAIN_EMBEDDING}); gold: CX types')
