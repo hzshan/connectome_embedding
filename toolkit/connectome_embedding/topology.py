@@ -11,7 +11,8 @@ persistent homology and intrinsic dimension.
                        (Denti et al. 2022); TwoNN is the smallest scale
 
 Signatures: a ring has one long-lived H1 feature; a torus two H1 and one H2.
-Needs ripser (pip install ripser).
+Needs ripser (pip install ripser) and, for gride_dimension, scikit-dimension >= 0.6.1
+(pip install scikit-dimension).
 """
 import numpy as np
 
@@ -89,30 +90,16 @@ def two_nn_dimension(x):
 
 def gride_dimension(x, n1):
     """
-    Gride intrinsic dimension (Denti et al. 2022) at neighbour scale n1.
+    Gride intrinsic dimension (Denti et al. 2022) at neighbour scale n1, from
+    scikit-dimension (skdim.id.GRIDE, n2 = 2 * n1).
 
     Maximum-likelihood estimate from mu = r_n2 / r_n1, the ratio of the distances from
-    each point to its n2-th and n1-th nearest neighbours, with n2 = 2 * n1. For points
-    with locally uniform density in d dimensions, mu has density
-        f(mu) = d (mu^d - 1)^(n2 - n1 - 1) / (B(n2 - n1, n1) mu^((n2 - 1) d + 1)).
-    n1 = 1 is TwoNN. Larger n1 measures the dimension at a larger scale and is less
-    sensitive to how regularly the nearest neighbours are spaced.
+    each point to its n2-th and n1-th nearest neighbours. n1 = 1 is TwoNN. Larger n1
+    measures the dimension at a larger scale and is less sensitive to how regularly
+    the nearest neighbours are spaced.
     Needs n2 < number of points; returns NaN otherwise.
     """
-    from scipy.optimize import minimize_scalar
-    n2 = 2 * n1
-    if n2 >= len(x):
+    import skdim
+    if 2 * n1 >= len(x):
         return np.nan
-    dist = np.sqrt(((x[:, None, :] - x[None, :, :])**2).sum(-1))
-    np.fill_diagonal(dist, np.inf)
-    nearest = np.sort(dist, 1)
-    mu = nearest[:, n2 - 1] / nearest[:, n1 - 1]
-    log_mu = np.log(mu[np.isfinite(mu) & (mu > 1)])
-
-    def neg_log_likelihood(d):
-        # log(mu^d - 1), computed stably; the Beta-function term does not depend on d
-        log_mu_d_minus_1 = d * log_mu + np.log1p(-np.exp(-d * log_mu))
-        return -np.sum(np.log(d) + (n2 - n1 - 1) * log_mu_d_minus_1
-                       - ((n2 - 1) * d + 1) * log_mu)
-
-    return minimize_scalar(neg_log_likelihood, bounds=(1e-3, 100), method='bounded').x
+    return skdim.id.GRIDE(n1=n1).fit(np.asarray(x, dtype=np.float64)).dimension_
