@@ -14,6 +14,11 @@ same split:
                       asymmetric (W_ij != W_ji), also within a cell type
                       (models.SourceTargetModel; m starts at 0, so the model nests
                       'with_types')
+  - 'pair_sampling': as 'with_types', trained with neuron-pair sampling: each
+                      step uses PAIRS_PER_STEP training pairs drawn at random
+                      (connected, unconnected) instead of all of them
+                      (models.train_model, pairs_per_step), so memory and time
+                      per step do not grow as N^2
 Rotations are not fit here.
 
 Reported per run: Poisson log-likelihood per neuron pair on the training and
@@ -26,7 +31,7 @@ format as the pickles from embed_hemibrain.py, plus the train/test split and
 log-likelihoods). Runs that already have a pickle are skipped. The plots are built
 from those pickles.
 """
-import os, pickle, datetime
+import os, pickle, datetime, time
 import numpy as np
 import pandas as pd
 import torch
@@ -53,6 +58,7 @@ DIMS = {
     'with_types': [3, 5, 7, 9],
     'without_types': [3, 5, 7, 9, 11],
     'source_target': [3, 5, 7, 9],
+    'pair_sampling': [3, 5, 7, 9],
 }
 MODELS = list(DIMS)
 SEEDS = [0, 1, 2, 3, 4, 5]       # one train/test split and initialization per seed
@@ -66,6 +72,7 @@ TRAINING = {
     'loss_type': 'poisson',
     'modifier_regularizer': 0.01,   # source_target only: penalty on the target modifier m
 }
+PAIRS_PER_STEP = (100000, 100000)   # pair_sampling: (connected, unconnected) pairs per step
 
 SAVE_DIR = 'embeddings/fig2_model_hyperparam_comparison'   # one pickle per fitted embedding
 
@@ -152,6 +159,7 @@ def fit_and_evaluate(D, seed, model_kind, train_mask, test_mask):
         'use_cell_types': use_cell_types,
         'train_fraction': TRAIN_FRACTION,
         'save_filename': embedding_filename(D, seed, model_kind),
+        'pairs_per_step': PAIRS_PER_STEP if model_kind == 'pair_sampling' else None,
     }
 
     if model_kind == 'source_target':
@@ -172,11 +180,14 @@ def fit_and_evaluate(D, seed, model_kind, train_mask, test_mask):
         def reg_fn(model):
             return torch.mean(model.embeddings**2) * hp['embedding_regularizer']
 
+    start = time.perf_counter()
     losses, _, _ = models.train_model(
         model, target_mat=data.J,
         loss_type=hp['loss_type'], lr=hp['lr'],
         steps=hp['steps'], print_every=hp['steps'] // 10,
-        reg_fn=reg_fn, train_mask=train_mask, test_mask=test_mask)
+        reg_fn=reg_fn, train_mask=train_mask, test_mask=test_mask,
+        pairs_per_step=hp['pairs_per_step'], pair_seed=seed)
+    train_seconds = time.perf_counter() - start
 
     model.embeddings = model.embeddings.detach()
     if model_kind == 'source_target':
@@ -198,6 +209,7 @@ def fit_and_evaluate(D, seed, model_kind, train_mask, test_mask):
         'test_mask': test_mask,
         'train_loglik': train_loglik,
         'test_loglik': test_loglik,
+        'train_seconds': train_seconds,
     }
     pickle.dump(results_to_save, open(hp['save_filename'], 'wb'))
 
@@ -224,6 +236,7 @@ def load_results(seeds=SEEDS):
                     'n_params': n_params(model_kind, D),
                     'train_loglik': saved['train_loglik'],
                     'test_loglik': saved['test_loglik'],
+                    'train_seconds': saved.get('train_seconds', np.nan),
                     'embedding_file': filename,
                 })
     return pd.DataFrame(rows)
@@ -246,7 +259,7 @@ for seed in SEEDS:
 #%% Load the results from the saved pickles
 results = load_results()
 print(f'Loaded {len(results)} runs from {SAVE_DIR}')
-print(results.groupby(['model', 'D'])[['train_loglik', 'test_loglik']].agg(['mean', 'std']))
+print(results.groupby(['model', 'D'])[['train_loglik', 'test_loglik', 'train_seconds']].agg(['mean', 'std']))
 
 
 #%% Plot: log-likelihood vs number of parameters, mean across seeds with error bars (std across seeds)
@@ -254,6 +267,7 @@ MODEL_STYLES = {
     'with_types': ('r', 'with cell types'),
     'without_types': ('k', 'without cell types'),
     'source_target': ('C0', 'with cell types, source/target'),
+    'pair_sampling': ('C1', 'with cell types, pair sampling'),
 }
 
 def plot_loglik_vs_n_params(results, column, ylabel, model_kinds=MODELS):
@@ -283,5 +297,11 @@ plot_loglik_vs_n_params(results, 'test_loglik', 'log-likelihood\nper pair (held 
                         model_kinds=['with_types', 'source_target'])
 plot_loglik_vs_n_params(results, 'train_loglik', 'log-likelihood\nper pair (training)',
                         model_kinds=['with_types', 'source_target'])
+
+# all pairs vs sampled pairs at each step, both with cell types
+plot_loglik_vs_n_params(results, 'test_loglik', 'log-likelihood\nper pair (held out)',
+                        model_kinds=['with_types', 'pair_sampling'])
+plot_loglik_vs_n_params(results, 'train_loglik', 'log-likelihood\nper pair (training)',
+                        model_kinds=['with_types', 'pair_sampling'])
 
 # %%
