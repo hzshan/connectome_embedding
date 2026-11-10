@@ -24,6 +24,7 @@ import pandas as pd
 import numpy as np
 import torch
 import pandas
+import scipy.sparse
 from scipy.sparse import csr_matrix
 
 
@@ -58,7 +59,9 @@ class ConnectivityData:
         Data object of a connectivity matrix and information about neurons.
 
         Args:
-            J: NxN torch tensor, the connectivity matrix
+            J: NxN torch tensor, the connectivity matrix; a scipy.sparse
+                matrix is kept sparse (for connectomes too large for a dense
+                matrix, fitted with pair sampling)
             onehot_types: NxNtype torch tensor, the one-hot encoding of neuron types
             type_hash: dict, the mapping from type string to type index
             types: list of str, the list of unique types
@@ -66,7 +69,9 @@ class ConnectivityData:
             N_per_type: list of int, the number of neurons of each type
             neurons: pandas DataFrame, the information about each neuron
         """
-        if type(J) != torch.Tensor:
+        if scipy.sparse.issparse(J):
+            self.J = J.tocsr()
+        elif type(J) != torch.Tensor:
             self.J = torch.tensor(J)
         else:
             self.J = J
@@ -85,6 +90,27 @@ class ConnectivityData:
 
         assert self.onehot_types.shape == (self.N, self.Ntype)
         assert len(self.types) == self.Ntype
+
+
+def sparse_connectivity(body_ids, conns):
+    """
+    Sparse connectivity matrix of the given neurons, in J convention:
+    J[i, j] = synapses from neuron body_ids[i] to neuron body_ids[j].
+
+    body_ids: sequence of N body IDs, in the order of the rows of J
+    conns: DataFrame of connections with columns body_pre, body_post, weight
+        (as the maleCNS connectome-weights feather file); connections with a
+        neuron not in body_ids are ignored.
+    Returns an N x N scipy.sparse.csr_matrix of float32.
+    """
+    index_of = pd.Series(np.arange(len(body_ids)), index=np.asarray(body_ids))
+    assert index_of.index.is_unique, 'body_ids must be unique'
+    within = conns[conns['body_pre'].isin(index_of.index)
+                   & conns['body_post'].isin(index_of.index)]
+    rows = index_of[within['body_pre']].values
+    cols = index_of[within['body_post']].values
+    return csr_matrix((within['weight'].values.astype(np.float32), (rows, cols)),
+                      shape=(len(body_ids), len(body_ids)))
 
 
 def get_W_all_neuronall(datapath = "", min_num_per_type=5):
