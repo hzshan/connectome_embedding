@@ -6,6 +6,7 @@ Per-cell-type scores of the shape of an embedding, for asking which types form a
                       (utils.solve_shadowmatic2) and its circularity score
   h1_scores           longest H1 (loop) lifetime from persistent homology, optionally
                       against Gaussian clouds with the same size and PCA spectrum
+  dimension_scores    intrinsic dimension (Gride at one neighbour scale)
 
 Each scoring function takes a numpy array of embeddings (N x D), a ConnectivityData
 (data.neuron_hash) and the cell types to score; row i of the embeddings is neuron i
@@ -67,4 +68,20 @@ def h1_scores(embeddings, data, types, rng, max_points=300, n_null=0):
                         'h1_null_95': np.percentile(null_h1, 95),
                         'h1_relative': row['h1_1st'] / np.percentile(null_h1, 95)})
         rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def dimension_scores(embeddings, data, types, gride_n1):
+    """
+    Intrinsic dimension of each cell type's embeddings (all neurons of the type).
+
+    Returns:
+        DataFrame with columns type and gride_dim (topology.gride_dimension at
+        neighbour scale gride_n1).
+    """
+    rows = []
+    for cell_type in types:
+        x = embeddings[data.neuron_hash[cell_type]]
+        rows.append({'type': cell_type,
+                     'gride_dim': topology.gride_dimension(x, gride_n1)})
     return pd.DataFrame(rows)
