@@ -9,6 +9,8 @@ scored by each function in SCORERS:
   homology     longest H1 (loop) lifetime from persistent homology
                (geometry_scores.h1_scores), optionally relative to matched Gaussian
                clouds (H1_N_NULL)
+  dimension    intrinsic dimension, Gride estimator at neighbour scale GRIDE_N1
+               (geometry_scores.dimension_scores)
   anatomy      Kendall's tau between embedding angles and PB glomerulus / FB column
                order, for CX types with anatomical labels (anatomy.mean_tau_per_type)
 Every table also has the type's number of neurons and group (CX columnar, CX other,
@@ -36,7 +38,7 @@ from connectome_embedding import geometry_scores, anatomy
 # ---------------------------------------------------------------------------
 EMBEDDING_DIR = 'embeddings/'
 RESULTS_DIR = 'results/type_geometry/'
-NULL_SEEDS = [0, 1, 2, 3, 4]
+NULL_SEEDS = list(range(20))
 EMBEDDINGS = (['whole_hemibrain_embedding.pkl']
               + [f'whole_hemibrain_embedding_block_shuffled_seed{s}.pkl' for s in NULL_SEEDS])
 
@@ -49,6 +51,11 @@ CIRCLE_SEARCH = {'nseeds_to_try': 50, 'max_iter': 10}
 MAX_POINTS = 300     # subsample larger types to keep ripser fast
 H1_N_NULL = 100      # matched Gaussian clouds per type for h1_relative (0: none)
 SEED = 0             # seed for subsampling and the Gaussian clouds
+
+# Intrinsic dimension
+GRIDE_N1 = 4         # Gride neighbour scale (n2 = 2 * n1 = 8 < MIN_NEURONS). At n1 = 1
+                     # (TwoNN) the estimate exceeds D when nearest neighbours are more
+                     # regularly spaced than at random
 
 # Anatomy
 ANATOMY_REFERENCE_TYPE = 'EPG'   # embeddings are projected onto the top two PCs of this type
@@ -64,6 +71,10 @@ def score_homology(embeddings, data, types):
                                      max_points=MAX_POINTS, n_null=H1_N_NULL)
 
 
+def score_dimension(embeddings, data, types):
+    return geometry_scores.dimension_scores(embeddings, data, types, GRIDE_N1)
+
+
 def score_anatomy(embeddings, data, types):
     if ANATOMY_REFERENCE_TYPE not in data.neuron_hash:
         return pd.DataFrame({'type': types})
@@ -75,6 +86,7 @@ def score_anatomy(embeddings, data, types):
 SCORERS = {
     'circularity': score_circularity,
     'homology': score_homology,
+    'dimension': score_dimension,
     'anatomy': score_anatomy,
 }
 
