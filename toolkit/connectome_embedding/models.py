@@ -33,11 +33,22 @@ class Model:
         self.onehot_types = onehot_types
 
         assert onehot_types.size() == (N, Ntype)
+        # cell type of each neuron as an integer label, computed once (argmax over
+        # the N x Ntype one-hot matrix is expensive to repeat at every step)
+        self._types = onehot_types.argmax(1)
 
         self.params = [self.embeddings, self.A, self.B, self.C]
 
         assert wrapper_fn in ['exp', 'softplus']
         self.wrapper_fn_choice = wrapper_fn
+
+
+    @property
+    def types(self):
+        """Cell type of each neuron as an integer label (0 .. Ntype-1): N."""
+        if getattr(self, '_types', None) is None:   # a model pickled without the cache
+            self._types = self.onehot_types.argmax(1)
+        return self._types
 
 
     def expand_type_pairs(self, X):
@@ -46,7 +57,7 @@ class Model:
         entry is X[type of i, type of j]. Same as onehot @ X @ onehot.T, done by
         indexing.
         """
-        types = self.onehot_types.argmax(1)
+        types = self.types
         return X[types][:, types]
 
 
@@ -263,7 +274,7 @@ class InteractionModel(Model):
         rotation_mats = self.get_rotation_mats()
 
         # Cell type of each neuron as an integer label (0 .. Ntype-1): N
-        types = self.onehot_types.argmax(1)
+        types = self.types
 
         # Expanding the square splits the distance into three terms:
         #     d_ij = ||z_i||^2 + ||z_j R||^2 - 2 z_i . (z_j R)
@@ -338,7 +349,7 @@ class InteractionModel(Model):
         if by_pair:
             source_inds, target_inds = pairs[:, 0], pairs[:, 1]
             # kernel parameters of each pair's (source type, target type)
-            types = self.onehot_types.argmax(1)
+            types = self.types
             source_types, target_types = types[source_inds], types[target_inds]
             scaling = self.A[source_types, target_types]
             covar = self.C[source_types, target_types]**2 + eps_dist
