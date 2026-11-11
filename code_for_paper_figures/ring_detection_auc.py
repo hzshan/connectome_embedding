@@ -175,36 +175,36 @@ print('Columnar CX types below the columnar-CX median on every score:')
 print(real[columnar & below].sort_values(score_a)[columns].round(3).to_string(index=False))
 
 
-#%% Real vs block-shuffled embeddings
-def plot_real_vs_null(real_table, null_table, score, title):
-    """One column per type, sorted by the real score: real (colored by group) and each null seed (black)."""
-    order = real_table.sort_values(score, ascending=False)['type'].tolist()
-    x = {t: i for i, t in enumerate(order)}
-    plt.figure(figsize=(max(3, 0.05 * len(order)), 1.8), dpi=300)
-    null_rows = null_table[null_table['type'].isin(x)]
-    plt.scatter(null_rows['type'].map(x), null_rows[score], s=2, color='k', lw=0,
-                label='block-shuffled', zorder=2)
-    plt.scatter(real_table['type'].map(x), real_table[score], s=4, lw=0, zorder=3,
-                color=real_table['group'].map(GROUP_COLORS), label='real (color: group)')
-    plt.xticks(range(len(order)), order, rotation=90, fontsize=3)
-    plt.ylabel({**SCORES, **EXTRA_SCORES}.get(score, score), fontsize=6)
-    plt.title(title, fontsize=6)
-    plt.legend(fontsize=4, frameon=False)
-    plt.tight_layout()
+#%% Real vs block-shuffled embeddings: median per group and AUC on the shuffled embeddings
+nulls = load_nulls(NULLS)
+null_scores = list(SCORES) + [s for s in EXTRA_SCORES if s in real.columns]
 
+# median of each score per group, real vs shuffled
+summary = pd.concat({'real': real.groupby('group')[null_scores].median(),
+                     'shuffled': nulls.groupby('group')[null_scores].median()}, axis=1)
+print(f'{REAL}: median per group')
+print(summary.round(3).to_string())
 
+# AUC on the shuffled embeddings
+null_aucs = pd.concat([auc_table(t, list(SCORES), rng).assign(null_seed=s)
+                       for s, t in nulls.groupby('null_seed')])
+print(f'{NULLS}: AUC on shuffled embeddings (mean and range over seeds)')
+print(null_aucs.groupby(['comparison', 'score'])['AUC']
+      .agg(['mean', 'min', 'max']).round(3).to_string())
+
+#%% Plot: ROC curves on the real and the block-shuffled embeddings
 def plot_roc_real_vs_null(real_table, null_table, title):
     """
-    ROC curves of each score (rows) for each comparison (columns): the real embedding
+    ROC curves of each score (columns) for each comparison (rows): the real embedding
     (colored) and each block-shuffled embedding (gray, one curve per null seed).
     """
     comps = list(comparisons(real_table))
-    fig, axes = plt.subplots(len(SCORES), len(comps), figsize=(3.6, 1.9 * len(SCORES)), dpi=300,
+    fig, axes = plt.subplots(len(comps), len(SCORES), figsize=(1.9 * len(SCORES), 3.6), dpi=300,
                              squeeze=False)
     for i, (score, score_title) in enumerate(SCORES.items()):
         color = SCORE_COLORS[score]
         for j, name in enumerate(comps):
-            ax = axes[i, j]
+            ax = axes[j, i]
             null_aucs = []
             for _, t in null_table.groupby('null_seed'):
                 pos, neg = comparisons(t)[name]
@@ -223,36 +223,65 @@ def plot_roc_real_vs_null(real_table, null_table, title):
             ax.plot([0, 1], [0, 1], color='gray', lw=0.5, ls=':')
             ax.set_aspect('equal')
             ax.legend(fontsize=3.5, frameon=False, loc='lower right')
-            if i == 0:
-                ax.set_title(f'{name}\n(n = {pos.sum()} / {neg.sum()})', fontsize=5)
-            if i == len(SCORES) - 1:
-                ax.set_xlabel('false positive rate', fontsize=6)
             if j == 0:
                 sign = '\n(lower = CX)' if SCORE_SIGNS.get(score, 1) < 0 else ''
-                ax.set_ylabel(f'{score_title}{sign}\ntrue positive rate', fontsize=6)
+                ax.set_title(f'{score_title}{sign}', fontsize=5)
+            if j == len(comps) - 1:
+                ax.set_xlabel('false positive rate', fontsize=6)
+            if i == 0:
+                ax.set_ylabel(f'{name}\n(n = {pos.sum()} / {neg.sum()})\ntrue positive rate', fontsize=6)
     fig.suptitle(f'{title}; shuffled: range over seeds', fontsize=5)
     plt.tight_layout()
 
 
-nulls = load_nulls(NULLS)
-null_scores = list(SCORES) + [s for s in EXTRA_SCORES if s in real.columns]
-
-# median of each score per group, real vs shuffled
-summary = pd.concat({'real': real.groupby('group')[null_scores].median(),
-                     'shuffled': nulls.groupby('group')[null_scores].median()}, axis=1)
-print(f'{REAL}: median per group')
-print(summary.round(3).to_string())
-
-# AUC on the shuffled embeddings
-null_aucs = pd.concat([auc_table(t, list(SCORES), rng).assign(null_seed=s)
-                       for s, t in nulls.groupby('null_seed')])
-print(f'{NULLS}: AUC on shuffled embeddings (mean and range over seeds)')
-print(null_aucs.groupby(['comparison', 'score'])['AUC']
-      .agg(['mean', 'min', 'max']).round(3).to_string())
-
-#%% Plot: ROC curves on the real and the block-shuffled embeddings
 plot_roc_real_vs_null(real, nulls, f'{REAL} vs block-shuffled')
 
-#%% Plot: each score per type, real vs block-shuffled
-for score in null_scores:
+#%% Plot: each score per type, real vs block-shuffled: raw values, then z-scored against
+# the type's block-shuffled values
+def plot_real_vs_null(real_table, null_table, score, title, ylabel=None):
+    """
+    One column per type, sorted by the real score: real (colored by group, one legend
+    entry per group) and each null seed (black).
+    """
+    order = real_table.sort_values(score, ascending=False)['type'].tolist()
+    x = {t: i for i, t in enumerate(order)}
+    plt.figure(figsize=(max(3, 0.05 * len(order)), 1.8), dpi=300)
+    null_rows = null_table[null_table['type'].isin(x)]
+    plt.scatter(null_rows['type'].map(x), null_rows[score], s=2, color='k', lw=0,
+                label='block-shuffled', zorder=2)
+    for g in anatomy.GROUPS:
+        rows = real_table[real_table['group'] == g]
+        plt.scatter(rows['type'].map(x), rows[score], s=4, lw=0, zorder=3,
+                    color=GROUP_COLORS[g], label=f'real, {g}')
+    plt.xticks(range(len(order)), order, rotation=90, fontsize=3)
+    plt.ylabel({**SCORES, **EXTRA_SCORES}.get(score, score) if ylabel is None else ylabel, fontsize=6)
+    plt.title(title, fontsize=6)
+    plt.legend(fontsize=4, frameon=False)
+    plt.tight_layout()
+
+
+def zscore_by_null(real_table, null_table, scores):
+    """
+    Real and null tables with each score z-scored per type against the null seeds:
+    (value - mean over null seeds of the type) / (std over null seeds of the type).
+    Types that are not in the null table are dropped.
+    """
+    stats = null_table.groupby('type')[scores].agg(['mean', 'std'])
+    real_z = real_table[real_table['type'].isin(stats.index)].copy()
+    null_z = null_table.copy()
+    for table in (real_z, null_z):
+        for score in scores:
+            mean = table['type'].map(stats[(score, 'mean')])
+            std = table['type'].map(stats[(score, 'std')])
+            table[score] = (table[score] - mean) / std
+    return real_z, null_z
+
+
+for score in SCORES:
     plot_real_vs_null(real, nulls, score, f'{REAL} vs block-shuffled')
+
+real_z, nulls_z = zscore_by_null(real, nulls, list(SCORES))
+for score in SCORES:
+    plot_real_vs_null(real_z, nulls_z, score, f'{REAL} vs block-shuffled',
+                      ylabel=f'{SCORES[score]}\n(z-score vs block-shuffled)')
+    plt.axhline(0, color='gray', lw=0.5, ls='--', zorder=1)
