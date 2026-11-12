@@ -16,7 +16,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .utils import projection_directions
+from .utils import get_top_two_PC_directions
 from .data_utils import types_matching
 
 
@@ -130,12 +130,12 @@ def pca_angles(embeddings, data, reference_type=None):
     """
     Angle of each neuron: project the embeddings onto two directions and take arctan.
 
-    The directions (utils.projection_directions) are the top two PCs of the
+    The directions (utils.get_top_two_PC_directions) are the top two PCs of the
     zero-meaned embeddings of reference_type (e.g. 'EPG'), or of all embeddings if
     reference_type is None. Same arguments as utils.sort_embeddings.
     """
     reference_inds = None if reference_type is None else data.neuron_hash[reference_type]
-    projection = projection_directions(embeddings, reference_inds)
+    projection = get_top_two_PC_directions(embeddings, reference_inds)
     projected = (embeddings @ projection).detach().numpy()
     return np.arctan2(projected[:, 1], projected[:, 0])
 

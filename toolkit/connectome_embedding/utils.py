@@ -146,7 +146,7 @@ def block_normalize(J, onehot):
     return np.divide(J, per_pair_mean, out=np.zeros_like(J), where=per_pair_mean > 0)
 
 
-def projection_directions(embeddings, reference_inds=None):
+def get_top_two_PC_directions(embeddings, reference_inds=None):
     """
     Two directions (D x 2) to project embeddings onto for reading off angles.
 
@@ -159,6 +159,61 @@ def projection_directions(embeddings, reference_inds=None):
     return V[:, :2]
 
 
+def assign_angles_using_pca(embeddings, data, reference_types):
+    """Angle of each neuron in the reference types' PC plane, centered per type,
+    and the fraction of each type's variance that lies in that plane.
+
+    embeddings: N x D tensor; reference_types: names of the types whose top two PCs
+    define the plane. Returns theta (N, radians) and a Series of plane fractions
+    indexed by type."""
+    reference_inds = np.concatenate([data.neuron_hash[t] for t in reference_types])
+    projection = get_top_two_PC_directions(embeddings, reference_inds)
+    projected = (embeddings @ projection).detach().numpy()
+    emb = embeddings.detach().numpy()
+    theta = np.zeros(data.N)
+    plane_fraction = {}
+    for t in data.types:
+        inds = data.neuron_hash[t]
+        p = projected[inds] - projected[inds].mean(0)
+        theta[inds] = np.arctan2(p[:, 1], p[:, 0])
+        total = ((emb[inds] - emb[inds].mean(0)) ** 2).sum()
+        plane_fraction[t] = (p ** 2).sum() / total
+    return theta, pandas.Series(plane_fraction)
+
+
+def phase_offsets_from_synapses(J, theta, groups):
+    """Synapse-weighted mean phase shift (degrees), consistency |z| and synapse count
+    for every pair of groups (rows: presynaptic group A, columns: postsynaptic group B).
+
+    J: N x N numpy array, J[i, j] = synapses from i to j; theta: angle of each neuron
+    (radians); groups: dict name -> neuron indices. For A -> B,
+    z = sum_ij J[i, j] exp(1j * (theta_j - theta_i)) / sum_ij J[i, j]; the offset is
+    angle(z) and the consistency is |z|."""
+    phasor = np.exp(1j * theta)
+    names = list(groups)
+    offset = pandas.DataFrame(np.nan, index=names, columns=names)
+    consistency = offset.copy()
+    n_syn = offset.copy()
+    for a in names:
+        ia = groups[a]
+        for b in names:
+            ib = groups[b]
+            w = J[np.ix_(ia, ib)]
+            total = w.sum()
+            n_syn.loc[a, b] = total
+            if total == 0:
+                continue
+            z = (np.conj(phasor[ia])[:, None] * w * phasor[ib][None, :]).sum() / total
+            offset.loc[a, b] = np.degrees(np.angle(z))
+            consistency.loc[a, b] = np.abs(z)
+    return offset, consistency, n_syn
+
+
+def wrap_deg(deg):
+    """Wrap angles in degrees to (-180, 180]."""
+    return -((-np.asarray(deg) + 180) % 360 - 180)
+
+
 def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
                     reference_type=None):
     """
@@ -169,7 +224,7 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
     are still type 1, second 20 neurons are still type 2, etc.
 
     All embeddings are projected onto two directions and sorted within each type
-    by the arctan of the projection. See projection_directions for how the
+    by the arctan of the projection. See get_top_two_PC_directions for how the
     directions depend on reference_type.
 
     Args:
@@ -181,7 +236,7 @@ def sort_embeddings(embeddings, data: data_utils.ConnectivityData,
     sorted_inds: N-dim np.array, the indices of the sorted embeddings
     """
     reference_inds = None if reference_type is None else data.neuron_hash[reference_type]
-    projected_all_embeddings = embeddings @ projection_directions(embeddings, reference_inds)
+    projected_all_embeddings = embeddings @ get_top_two_PC_directions(embeddings, reference_inds)
 
     sorted_inds = []
 
