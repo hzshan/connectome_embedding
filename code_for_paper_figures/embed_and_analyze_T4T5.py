@@ -37,6 +37,10 @@ synapse-weighted mean column of their presynaptic partners that have one.
 
 Run from code_for_paper_figures/. The fitted embedding is saved in the format of
 embed_hemibrain.py; if the file exists, it is loaded instead of refitted.
+
+The model is fitted with pair sampling (models.train_model with pairs_per_step): each
+step uses an unbiased estimate of the full Poisson loss from randomly drawn connected
+and unconnected pairs, so memory and time per step do not grow as N^2.
 """
 import os
 import pickle
@@ -66,7 +70,7 @@ WEIGHTS_FILE = 'connectome-weights-male-cns-v0.9-minconf-0.5.feather'
 EMBEDDING_DIR = 'embeddings/'   # the fitted embedding is saved here
 
 SIDE = 'R'                 # optic lobe (somaSide of the T4 / T5 neurons)
-PATCH_RADIUS = None        # None: all T4 / T5 of the optic lobe. A number R: keep T4 / T5
+PATCH_RADIUS = 6        # None: all T4 / T5 of the optic lobe. A number R: keep T4 / T5
                            # with |hex1 - c1| <= R and |hex2 - c2| <= R, around the median
                            # column (c1, c2) of Mi1, to keep the connectivity matrix small
 
@@ -74,19 +78,21 @@ SUBTYPES = {'T4': ['T4a', 'T4b', 'T4c', 'T4d'],
             'T5': ['T5a', 'T5b', 'T5c', 'T5d']}
 
 # select input/output types to include
-PARTNER_MIN_FRACTION = 0.01  # partner type: >= this fraction of T4 or T5 input or output
+PARTNER_MIN_FRACTION = 0  # partner type: >= this fraction of T4 or T5 input or output
                              # synapses; None: no partner types (T4 and T5 only)
 PARTNER_MIN_SYN = 10         # partner neuron: >= this many synapses with the selected T4 / T5
-MIN_NUM_PER_TYPE = 3         # drop types with fewer neurons in the selection
+MIN_NUM_PER_TYPE = 1         # drop types with fewer neurons in the selection
 
 hp = {
-    'embedding_dim': 5,
+    'embedding_dim': 7,
     'wrapper_fn': 'softplus',
-    'embedding_regularizer': 0.001,
+    'embedding_regularizer': 1e-3,
     'lr': 0.05,
+    'lr_end': 0.005,        # learning rate decays exponentially from lr to lr_end
     'steps': 10000,
     'loss_type': 'poisson',
-    'seed': 0,
+    'pairs_per_step': (1_000_000, 1_000_000),   # (connected, unconnected) pairs per step
+    'seed': 0,              # initialization and pair sampling
 }
 hp['save_filename'] = (f"optic_lobe_T4T5_{SIDE}_{'whole' if PATCH_RADIUS is None else f'patch{PATCH_RADIUS}'}"
                        f"{'_T4T5only' if PARTNER_MIN_FRACTION is None else f'_partners{PARTNER_MIN_FRACTION}'}"
@@ -100,8 +106,6 @@ RETINOTOPY_DEGREE = 2      # polynomial in column position regressed out before 
 CLUSTER_PCS = 2            # cluster the top CLUSTER_PCS principal components of the
                            # residuals; None clusters all embedding dimensions
 SCORE_SEED = 0
-PCS_3D = (2, 3, 4)         # principal components (0-based) of the T4 / T5 embeddings
-                           # shown in the 3D plot; must be < embedding_dim
 
 
 #%% Annotations and the patch of columns
@@ -201,15 +205,14 @@ print(neurons['model_type'].value_counts().to_string())
 print(neurons.groupby('model_type')['subtype'].nunique().loc[['T4', 'T5']])
 
 #%% Connectivity matrix: J[i, j] = synapses from neuron i to neuron j
-index_of = pd.Series(np.arange(len(neurons)), index=neurons['bodyId'])
-within = conns[conns['body_pre'].isin(index_of.index) & conns['body_post'].isin(index_of.index)]
-J = np.zeros((len(neurons), len(neurons)), dtype=np.float32)
-J[index_of[within['body_pre']].values, index_of[within['body_post']].values] = within['weight'].values
+J = data_utils.sparse_connectivity(neurons['bodyId'], conns)
 del conns
+J.setdiag(0)   # self-connections are not modelled
+J.eliminate_zeros()
 
-data = data_utils.ConnectivityData(torch.tensor(J), neurons, 'model_type')
-print(f'{data.N} neurons, {data.Ntype} types, {int(J.sum())} synapses, '
-      f'{(J > 0).mean():.3f} of pairs connected')
+data = data_utils.ConnectivityData(J, neurons, 'model_type')
+print(f'{data.N} neurons, {data.Ntype} types, {J.nnz} connected pairs, '
+      f'{int(J.sum())} synapses, {J.nnz / (data.N * (data.N - 1)):.3f} of pairs connected')
 
 #%% Fit the embedding (or load it if it was already fitted)
 save_path = os.path.join(EMBEDDING_DIR, hp['save_filename'])
@@ -231,8 +234,9 @@ else:
 
     model.use_transforms = False
     losses, _, _ = models.train_model(model, target_mat=data.J, loss_type=hp['loss_type'],
-                                      lr=hp['lr'], print_every=500, reg_fn=reg_fn,
-                                      steps=hp['steps'])
+                                      lr=hp['lr'], lr_end=hp['lr_end'], print_every=500,
+                                      reg_fn=reg_fn, steps=hp['steps'],
+                                      pairs_per_step=hp['pairs_per_step'], pair_seed=hp['seed'])
     model.embeddings = model.embeddings.detach()
     os.makedirs(EMBEDDING_DIR, exist_ok=True)
     pickle.dump({'time': datetime.datetime.now(), 'model': model, 'data': data,
@@ -301,6 +305,9 @@ for t in SUBTYPES:
     plt.tight_layout()
 
 #%% Interactive 3D plot: T4 and T5 embeddings (PCS_3D), colored by subtype
+PCS_3D = (0, 1, 2)         # principal components (0-based) of the T4 / T5 embeddings
+                           # shown in the 3D plot; must be < embedding_dim
+
 
 for t in SUBTYPES:
     inds = data.neuron_hash[t]
