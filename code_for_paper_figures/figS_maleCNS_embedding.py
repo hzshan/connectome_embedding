@@ -31,7 +31,7 @@ WEIGHTS_FILE = 'connectome-weights-male-cns-v0.9-minconf-0.5.feather'
 REFERENCE_TYPE = 'EPG'
 
 # Cell types shown in the connectivity plot, in this order
-PLOT_TYPES = ['EPG', 'Delta7', 'PEN_a(PEN1)', 'PEN_b(PEN2)']
+PLOT_TYPES = ['EPG', 'Delta7', 'PEG']
 
 
 #%% Load the embedding and its neuron info
@@ -75,3 +75,5 @@ cbar = plt.colorbar(ticks=[0, np.log(2), np.log(11), np.log(101)])
 cbar.ax.set_yticklabels([0, 1, 10, 100])
 cbar.set_label('# synapses')
 plt.tight_layout()
+
+# %%
